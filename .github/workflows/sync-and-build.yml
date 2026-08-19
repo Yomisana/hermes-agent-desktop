@@ -1,0 +1,108 @@
+name: sync-rebase-and-build-desktop
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # daily 02:00 UTC sync against upstream
+  workflow_dispatch: {}
+  push:
+    branches: [remote-only]
+
+env:
+  UPSTREAM_REPO: https://github.com/NousResearch/hermes-agent.git
+  UPSTREAM_BRANCH: main
+  WORK_BRANCH: remote-only
+
+jobs:
+  sync-rebase:
+    runs-on: ubuntu-latest
+    outputs:
+      conflict: ${{ steps.rebase.outputs.conflict }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.WORK_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.PUSH_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.email "ci@hermes.local"
+          git config user.name "Hermes Desktop CI"
+
+      - name: Add upstream remote
+        run: git remote add upstream "$UPSTREAM_REPO" || true
+
+      - name: Fetch upstream
+        run: git fetch upstream "$UPSTREAM_BRANCH"
+
+      - id: rebase
+        name: Rebase our commits onto upstream/main
+        run: |
+          set +e
+          git rebase "upstream/$UPSTREAM_BRANCH"
+          status=$?
+          if [ $status -ne 0 ]; then
+            git rebase --abort
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "conflict=false" >> "$GITHUB_OUTPUT"
+
+      - name: Push rebased branch
+        if: steps.rebase.outputs.conflict == 'false'
+        run: git push --force-with-lease origin "$WORK_BRANCH"
+
+      - name: Notify on conflict
+        if: steps.rebase.outputs.conflict == 'true'
+        run: |
+          curl -sf -X POST -H "Content-Type: application/json" \
+            -d '{"text":"⚠️ hermes-agent rebase conflict on remote-only — manual fix needed. See patches/0001-skip-bootstrap.patch"}' \
+            "${{ secrets.SLACK_WEBHOOK }}" || true
+
+  build:
+    needs: sync-rebase
+    if: needs.sync-rebase.outputs.conflict == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: remote-only
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Write seeded remote connection (company gateway)
+        shell: bash
+        run: |
+          mkdir -p apps/desktop/build-resources
+          cat > apps/desktop/build-resources/connection.seed.json << JSON
+          {
+            "mode": "remote",
+            "baseUrl": "${{ secrets.HERMES_GATEWAY_URL }}"
+          }
+          JSON
+
+      - name: Install deps and build
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run build
+
+      - name: Package with electron-builder
+        working-directory: apps/desktop
+        env:
+          HERMES_DESKTOP_REMOTE_ONLY: 'true'
+        run: npx electron-builder --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hermes-desktop-${{ matrix.os }}
+          path: |
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.AppImage
