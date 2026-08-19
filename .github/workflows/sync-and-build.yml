@@ -52,13 +52,6 @@ jobs:
         if: steps.rebase.outputs.conflict == 'false'
         run: git push --force-with-lease origin "$WORK_BRANCH"
 
-      - name: Notify on conflict
-        if: steps.rebase.outputs.conflict == 'true'
-        run: |
-          curl -sf -X POST -H "Content-Type: application/json" \
-            -d '{"text":"⚠️ hermes-agent rebase conflict on remote-only — manual fix needed. See patches/0001-skip-bootstrap.patch"}' \
-            "${{ secrets.SLACK_WEBHOOK }}" || true
-
   build:
     needs: sync-rebase
     if: needs.sync-rebase.outputs.conflict == 'false'

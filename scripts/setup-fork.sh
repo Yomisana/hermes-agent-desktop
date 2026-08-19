@@ -40,4 +40,4 @@ echo "  git commit -m 'feat(remote): skip local Agent bootstrap on remote-only b
 echo "  git push -u origin remote-only"
 echo ""
 echo "Then copy .github/workflows/sync-and-build.yml into this repo's .github/workflows/"
-echo "and set these repo secrets: PUSH_TOKEN, SLACK_WEBHOOK, HERMES_GATEWAY_URL"
+echo "and set these repo secrets: PUSH_TOKEN, HERMES_GATEWAY_URL"
