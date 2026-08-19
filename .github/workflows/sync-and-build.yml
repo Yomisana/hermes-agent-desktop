@@ -85,6 +85,7 @@ jobs:
           fi
           gh release create "desktop-$(date +%Y%m%d-%H%M%S)" \
             $assets \
+            --repo "$GITHUB_REPOSITORY" \
             --draft \
             --generate-notes \
             --title "Hermes Desktop (remote-only) — $(date +%Y-%m-%d)"
