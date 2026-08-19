@@ -1,60 +1,18 @@
-name: sync-rebase-and-build-desktop
+name: build-desktop-release
 
 on:
   schedule:
-    - cron: '0 2 * * *'   # daily 02:00 UTC sync against upstream
+    - cron: '0 2 * * *'   # daily 02:00 UTC
   workflow_dispatch: {}
   push:
-    branches: [remote-only]
+    branches: [master]
 
 env:
   UPSTREAM_REPO: https://github.com/NousResearch/hermes-agent.git
   UPSTREAM_BRANCH: main
-  WORK_BRANCH: remote-only
 
 jobs:
-  sync-rebase:
-    runs-on: ubuntu-latest
-    outputs:
-      conflict: ${{ steps.rebase.outputs.conflict }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.WORK_BRANCH }}
-          fetch-depth: 0
-          token: ${{ secrets.PUSH_TOKEN }}
-
-      - name: Configure git identity
-        run: |
-          git config user.email "ci@hermes.local"
-          git config user.name "Hermes Desktop CI"
-
-      - name: Add upstream remote
-        run: git remote add upstream "$UPSTREAM_REPO" || true
-
-      - name: Fetch upstream
-        run: git fetch upstream "$UPSTREAM_BRANCH"
-
-      - id: rebase
-        name: Rebase our commits onto upstream/main
-        run: |
-          set +e
-          git rebase "upstream/$UPSTREAM_BRANCH"
-          status=$?
-          if [ $status -ne 0 ]; then
-            git rebase --abort
-            echo "conflict=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "conflict=false" >> "$GITHUB_OUTPUT"
-
-      - name: Push rebased branch
-        if: steps.rebase.outputs.conflict == 'false'
-        run: git push --force-with-lease origin "$WORK_BRANCH"
-
   build:
-    needs: sync-rebase
-    if: needs.sync-rebase.outputs.conflict == 'false'
     strategy:
       fail-fast: false
       matrix:
@@ -62,18 +20,26 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: remote-only
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
+      - name: Clone upstream hermes-agent
+        run: git clone --depth 1 --branch "$UPSTREAM_BRANCH" "$UPSTREAM_REPO" hermes-agent
+
+      - name: Apply remote-only patch
+        shell: bash
+        run: |
+          cp apps/desktop/electron/remote-bootstrap-policy.ts hermes-agent/apps/desktop/electron/
+          cp apps/desktop/electron/remote-seed-connection.ts hermes-agent/apps/desktop/electron/
+          python3 scripts/apply-patch.py hermes-agent/apps/desktop/electron/main.ts
+
       - name: Write seeded remote connection (company gateway)
         shell: bash
         run: |
-          mkdir -p apps/desktop/build-resources
-          cat > apps/desktop/build-resources/connection.seed.json << JSON
+          mkdir -p hermes-agent/apps/desktop/build-resources
+          cat > hermes-agent/apps/desktop/build-resources/connection.seed.json << JSON
           {
             "mode": "remote",
             "baseUrl": "${{ secrets.HERMES_GATEWAY_URL }}"
@@ -81,13 +47,13 @@ jobs:
           JSON
 
       - name: Install deps and build
-        working-directory: apps/desktop
+        working-directory: hermes-agent/apps/desktop
         run: |
           npm ci
           npm run build
 
       - name: Package with electron-builder
-        working-directory: apps/desktop
+        working-directory: hermes-agent/apps/desktop
         env:
           HERMES_DESKTOP_REMOTE_ONLY: 'true'
         run: npx electron-builder --publish never
@@ -96,6 +62,31 @@ jobs:
         with:
           name: hermes-desktop-${{ matrix.os }}
           path: |
-            apps/desktop/dist/*.exe
-            apps/desktop/dist/*.dmg
-            apps/desktop/dist/*.AppImage
+            hermes-agent/apps/desktop/dist/*.exe
+            hermes-agent/apps/desktop/dist/*.dmg
+            hermes-agent/apps/desktop/dist/*.AppImage
+
+  draft-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets=$(find release-assets -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.AppImage' \) | tr '\n' ' ')
+          if [ -z "$assets" ]; then
+            echo "No packaged artifacts found; skipping release."; exit 0
+          fi
+          gh release create "desktop-$(date +%Y%m%d-%H%M%S)" \
+            $assets \
+            --draft \
+            --generate-notes \
+            --title "Hermes Desktop (remote-only) — $(date +%Y-%m-%d)"
