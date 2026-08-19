@@ -23,9 +23,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Clone upstream hermes-agent
+        shell: bash
         run: git clone --depth 1 --branch "$UPSTREAM_BRANCH" "$UPSTREAM_REPO" hermes-agent
 
       - name: Apply remote-only patch
