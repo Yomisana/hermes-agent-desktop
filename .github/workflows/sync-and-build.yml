@@ -57,15 +57,12 @@ jobs:
         working-directory: hermes-agent/apps/desktop
         env:
           HERMES_DESKTOP_REMOTE_ONLY: 'true'
-        run: npx electron-builder --publish never
+        run: npm run builder -- --publish never
 
       - uses: actions/upload-artifact@v4
         with:
           name: hermes-desktop-${{ matrix.os }}
-          path: |
-            hermes-agent/apps/desktop/dist/*.exe
-            hermes-agent/apps/desktop/dist/*.dmg
-            hermes-agent/apps/desktop/dist/*.AppImage
+          path: hermes-agent/apps/desktop/release/*
 
   draft-release:
     needs: build
@@ -82,7 +79,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          assets=$(find release-assets -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.AppImage' \) | tr '\n' ' ')
+          assets=$(find release-assets -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.AppImage' -o -name '*.zip' -o -name '*.msi' -o -name '*.deb' -o -name '*.rpm' \) | tr '\n' ' ')
           if [ -z "$assets" ]; then
             echo "No packaged artifacts found; skipping release."; exit 0
           fi
