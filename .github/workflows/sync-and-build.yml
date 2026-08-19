@@ -27,7 +27,7 @@ jobs:
 
       - name: Clone upstream hermes-agent
         shell: bash
-        run: git clone --depth 1 --branch "$UPSTREAM_BRANCH" "$UPSTREAM_REPO" hermes-agent
+        run: git clone --depth 1 --branch "$UPSTREAM_BRANCH" "https://x-access-token:${{ github.token }}@github.com/NousResearch/hermes-agent.git" hermes-agent
 
       - name: Apply remote-only patch
         shell: bash
