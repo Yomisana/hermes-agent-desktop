@@ -1,0 +1,38 @@
+From: Hermes Desktop Engineering <eng@hermes.local>
+Subject: [PATCH] feat(remote): skip local Agent auto-bootstrap when remote-only build
+
+
+This patch is intentionally minimal (1 new import + ~6 lines) to keep
+`git rebase upstream/main` conflict surface as small as possible.
+
+
+--- a/apps/desktop/electron/main.ts
++++ b/apps/desktop/electron/main.ts
+@@
+ import { createFirstRunSetupGate } from './first-run-setup-gate'
++import { shouldSkipAutoBootstrap, bootstrapSkippedError } from './remote-bootstrap-policy'
++import { seedRemoteConnectionIfMissing } from './remote-seed-connection'
+@@
++// Remote-only build: seed a company remote connection (if shipped with this build)
++// before anything reads connection.json. No-op on stock/official builds.
++seedRemoteConnectionIfMissing({
++ connectionConfigPath: DESKTOP_CONNECTION_CONFIG_PATH,
++ resourcesPath: process.resourcesPath,
++ log: rememberLog
++})
++
+@@ async function ensureRuntime(backend) {
+ if (backend.kind === 'bootstrap-needed') {
+ rememberLog('[bootstrap] no Hermes install found; starting first-launch bootstrap')
+
+
++ // Remote-only builds never auto-install a local runtime.
++ // Fail fast with an actionable message instead of running install.ps1 /
++ // install.sh / uv venv creation on the user's machine.
++ if (shouldSkipAutoBootstrap()) {
++ const err = bootstrapSkippedError(backend.activeRoot)
++ bootstrapFailure = err
++ throw err
++ }
++
+ if (await handOffWindowsBootstrapRecovery('bootstrap-needed')) {
