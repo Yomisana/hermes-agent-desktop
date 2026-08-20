@@ -9,7 +9,7 @@ on:
 
 env:
   UPSTREAM_REPO: https://github.com/NousResearch/hermes-agent.git
-  UPSTREAM_BRANCH: main
+  UPSTREAM_BRANCH: v2026.8.18
 
 jobs:
   build:
@@ -64,18 +64,6 @@ jobs:
         env:
           HERMES_DESKTOP_REMOTE_ONLY: 'true'
         run: npm run builder -- --publish never
-
-      - name: "Debug: check node-pty/get-windows in unpacked"
-        shell: bash
-        run: |
-          echo "=== unpacked resources/dist/node_modules 內容 ==="
-          find hermes-agent/apps/desktop/release/*-unpacked/resources -maxdepth 4 -type d -name 'node_modules' 2>/dev/null
-          echo "--- node-pty index.js ---"
-          find hermes-agent/apps/desktop/release -path '*node-pty*index.js' 2>/dev/null | head
-          echo "--- get-windows index.js ---"
-          find hermes-agent/apps/desktop/release -path '*get-windows*index.js' 2>/dev/null | head
-          echo "--- asar 內 node-pty/get-windows ---"
-          npx asar list hermes-agent/apps/desktop/release/*-unpacked/resources/app.asar 2>/dev/null | grep -iE 'node-pty|get-windows' | head -20
 
       - uses: actions/upload-artifact@v4
         with:
