@@ -55,7 +55,7 @@ jobs:
             hermes-agent/apps/desktop/electron/main.ts \
             hermes-agent/apps/desktop/package.json
 
-      - name: Write seeded remote connection (company gateway)
+      - name: Write optional seeded remote connection
         shell: bash
         env:
           HERMES_GATEWAY_URL: ${{ secrets.HERMES_GATEWAY_URL }}
@@ -69,6 +69,7 @@ jobs:
 
       - name: Package with electron-builder
         working-directory: hermes-agent/apps/desktop
+        shell: bash
         env:
           HERMES_DESKTOP_REMOTE_ONLY: 'true'
           DESKTOP_BUILD_VERSION: ${{ steps.version.outputs.desktop_build_version }}
