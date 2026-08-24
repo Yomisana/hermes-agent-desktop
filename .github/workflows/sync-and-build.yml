@@ -59,7 +59,7 @@ jobs:
         shell: bash
         env:
           HERMES_GATEWAY_URL: ${{ secrets.HERMES_GATEWAY_URL }}
-        run: python3 scripts/write-seed.py hermes-agent/apps/desktop/build-resources/connection.seed.json "$HERMES_GATEWAY_URL"
+        run: python3 scripts/write-seed.py hermes-agent/apps/desktop/build-resources/connection.seed.json "$HERMES_GATEWAY_URL" --allow-empty
 
       - name: Install deps and build
         working-directory: hermes-agent/apps/desktop

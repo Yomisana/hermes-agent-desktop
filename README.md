@@ -92,7 +92,7 @@ GitHub Actions secret 必須設定：
 HERMES_GATEWAY_URL=https://gateway.example.com
 ```
 
-只允許完整的 `http://` 或 `https://` URL，而且 URL 裡不能包含帳號密碼。
+如果有設定，URL 只允許完整的 `http://` 或 `https://` 格式，而且不能包含帳號密碼。若未設定 secret，CI 仍會產生通用 remote-only 安裝檔，但不會預先指定 Server URL，使用者第一次開啟時需要自行設定連線。
 
 ## 升級官方 Hermes Agent
 
