@@ -8,7 +8,7 @@
 
 ### 我要下載哪個檔案？
 
-如果這個 repo 的維護者有發布公開安裝檔，請到 GitHub 的 **Releases** 頁面依照電腦系統下載。組織也可以 fork 本 repo，設定自己的 Server URL，再從自己的 Releases 提供安裝檔：
+如果這個 repo 的維護者有發布公開安裝檔，請到 GitHub 的 **Releases** 頁面依照電腦系統下載。組織也可以 fork 本 repo，再從自己的 Releases 提供安裝檔：
 
 - Windows：`.exe`
 - macOS：`.dmg`
@@ -22,17 +22,17 @@
 ### 安裝後會發生什麼事？
 
 1. 開啟 Hermes Desktop。
-2. App 會自動帶入建置者設定的 Hermes Server 網址。
+2. 到 **Settings → Gateway → Remote gateway** 輸入 Server 管理者提供的網址。
 3. 如果系統要求登入，請使用 Server 管理者提供的登入方式。
 4. 對話與 Agent 工作會在遠端 Server 執行，不會偷偷在你的電腦安裝另一套 Hermes Agent。
 
-如果電腦上已經有自己的 Hermes 連線設定，安裝程式不會覆蓋它。
+公開安裝檔不會內建任何公司或私人 Server 網址；每位使用者都要自行設定連線。
 
 ### 這個安裝檔不會做什麼？
 
 - 不會自動安裝本機 Hermes Agent runtime。
-- 不會把 Server token 或自訂 headers 明文放進預設連線檔。
-- 不會因為重新安裝或更新就覆蓋使用者已存在的連線設定。
+- 不會把 Server URL、token 或自訂 headers 放進安裝檔。
+- 不會在 CI secrets 中要求或讀取 Gateway URL。
 
 ### 遇到問題怎麼辦？
 
@@ -63,15 +63,14 @@ Windows / macOS / Linux remote-only 安裝檔
 2. 從 Nous Research 下載乾淨的 Hermes Agent 原始碼。
 3. 驗證 commit SHA，防止同名 tag 指到不同內容。
 4. 套用本 repo 的 Desktop overlay。
-5. 把建置者設定的 Server URL 放進安裝包；不放 token。
-6. 分別打包 Windows、macOS 與 Linux 安裝檔。
-7. 用 `v<官方版本>-remote.<補丁版本>` 建立可追蹤的 release。
+5. 分別打包 Windows、macOS 與 Linux 安裝檔。
+6. 用 `v<官方版本>-remote.<補丁版本>` 建立可追蹤的 release。
 
 這個 repo 不會把整份 Hermes Agent 原始碼複製一份長期維護，因此比傳統 fork 更容易跟上官方版本。
 
 ## Desktop 補丁與 Server 補丁是兩件事
 
-這裡的 Desktop 補丁只控制使用者電腦上的 App，例如避免自動安裝本機 runtime、預先設定遠端 Server URL。
+這裡的 Desktop 補丁只控制使用者電腦上的 App，目前只負責避免自動安裝本機 runtime。Server URL 由使用者在 App 裡設定。
 
 如果漏洞位於 Hermes Server API，例如跨 profile 讀取 session、寫入別人的 `SOUL.md`，只更新 Desktop **不會**修好。遠端 Server 本身也必須升級或 backport 官方修正。詳細狀態與處理方式請看 [Server 安全補丁說明](docs/SECURITY-BACKPORTS.md)。
 
@@ -79,20 +78,13 @@ Windows / macOS / Linux remote-only 安裝檔
 
 - `upstream.json`：官方 repo、tag、tag object SHA、commit SHA、Desktop package version 及 overlay version。
 - `patches/manifest.json`：會套入 Desktop 的補丁，以及只供追蹤的 Server security issues/PRs。
-- `scripts/apply-patch.py`：修改官方 `main.ts` 與 Electron 打包資源；找不到唯一 anchor 時立即停止。
+- `scripts/apply-patch.py`：修改官方 `main.ts`；找不到唯一 anchor 時立即停止。
 - `scripts/version-info.py`：產生安裝檔版本及 release tag。
-- `scripts/write-seed.py`：驗證並建立只包含 URL 的連線 seed。
 - `server-backports.example.json`：Server backport manifest 範本；預設全部停用，不會盲目套 open PR。
 - `scripts/apply-server-backports.py`：在乾淨且 SHA 相符的 Hermes Agent checkout 套用已審查、鎖定 commit 的 backport。
 - `.github/workflows/sync-and-build.yml`：驗證、建置、打包及建立 draft release。
 
-GitHub Actions secret 必須設定：
-
-```text
-HERMES_GATEWAY_URL=https://gateway.example.com
-```
-
-如果有設定，URL 只允許完整的 `http://` 或 `https://` 格式，而且不能包含帳號密碼。若未設定 secret，CI 仍會產生通用 remote-only 安裝檔，但不會預先指定 Server URL，使用者第一次開啟時需要自行設定連線。
+這個公開建置流程不接受 `HERMES_GATEWAY_URL`，也不會把 Gateway URL 寫進安裝檔。使用者第一次開啟時需要自行設定連線，避免公開 repo 或公開 artifacts 意外帶入內部環境資訊。
 
 ## 升級官方 Hermes Agent
 

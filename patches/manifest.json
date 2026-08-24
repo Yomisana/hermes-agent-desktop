@@ -3,11 +3,11 @@
   "patches": [
     {
       "id": "desktop-remote-only",
-      "version": 1,
+      "version": 2,
       "scope": "desktop-client",
       "status": "local",
       "apply": "scripts/apply-patch.py",
-      "description": "Seed a URL-only remote connection and disable automatic local runtime bootstrap."
+      "description": "Disable automatic local runtime bootstrap; users configure the remote gateway explicitly."
     }
   ],
   "upstreamSecurity": [

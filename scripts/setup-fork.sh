@@ -23,9 +23,8 @@ git remote add upstream "$UPSTREAM_URL"
 
 git checkout -b remote-only main
 
-# Copy the two new policy files into the checkout
+# Copy the policy file into the checkout
 cp ../apps/desktop/electron/remote-bootstrap-policy.ts apps/desktop/electron/
-cp ../apps/desktop/electron/remote-seed-connection.ts apps/desktop/electron/
 
 echo ""
 echo "Now manually apply the ~8-line diff in patches/0001-skip-bootstrap.patch"
@@ -34,10 +33,9 @@ echo "since exact line numbers drift between releases and a blind 'git apply' is
 echo "to fail on a moving target file. After editing:"
 echo ""
 echo "  git add apps/desktop/electron/remote-bootstrap-policy.ts \"
-echo "          apps/desktop/electron/remote-seed-connection.ts \"
 echo "          apps/desktop/electron/main.ts"
 echo "  git commit -m 'feat(remote): skip local Agent bootstrap on remote-only builds'"
 echo "  git push -u origin remote-only"
 echo ""
 echo "Then copy .github/workflows/sync-and-build.yml into this repo's .github/workflows/"
-echo "and set these repo secrets: PUSH_TOKEN, HERMES_GATEWAY_URL"
+echo "No gateway URL or token is stored in this public repository."

@@ -30,6 +30,8 @@ Hermes Desktop ──API request──> Hermes Server ──讀寫──> profil
 | [#91345](https://github.com/NousResearch/hermes-agent/pull/91345) | [#91330](https://github.com/NousResearch/hermes-agent/issues/91330) 的較窄 PR | Open PR | 不重複 PR |
 | [#91381](https://github.com/NousResearch/hermes-agent/pull/91381) | [#91330](https://github.com/NousResearch/hermes-agent/issues/91330) 的較廣 PR | Open PR | 不重複 PR；注意它明列 aggregate endpoints 尚未涵蓋 |
 
+以上狀態已於 2026-08-24 透過 GitHub API 重新確認。`#91330`、`#91345` 與 `#91381` 仍為 open，並沒有合併；「PR 內已寫好修正」不等於「已進入官方 main 或 release」。官方最新 release `v2026.8.19` 也不能視為已包含這些仍未合併的 PR。
+
 官方狀態會變動；部署或準備 PR 前必須重新查詢，不能只依賴這份日期快照。
 
 ## 自行管理的 Server 要怎麼 backport？

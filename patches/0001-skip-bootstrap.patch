@@ -11,16 +11,6 @@ This patch is intentionally minimal (1 new import + ~6 lines) to keep
 @@
  import { createFirstRunSetupGate } from './first-run-setup-gate'
 +import { shouldSkipAutoBootstrap, bootstrapSkippedError } from './remote-bootstrap-policy'
-+import { seedRemoteConnectionIfMissing } from './remote-seed-connection'
-@@
-+// Remote-only build: seed a company remote connection (if shipped with this build)
-+// before anything reads connection.json. No-op on stock/official builds.
-+seedRemoteConnectionIfMissing({
-+ connectionConfigPath: DESKTOP_CONNECTION_CONFIG_PATH,
-+ resourcesPath: process.resourcesPath,
-+ log: rememberLog
-+})
-+
 @@ async function ensureRuntime(backend) {
  if (backend.kind === 'bootstrap-needed') {
  rememberLog('[bootstrap] no Hermes install found; starting first-launch bootstrap')

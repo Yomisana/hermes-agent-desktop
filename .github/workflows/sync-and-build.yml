@@ -15,9 +15,9 @@ jobs:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -50,16 +50,8 @@ jobs:
         shell: bash
         run: |
           cp apps/desktop/electron/remote-bootstrap-policy.ts hermes-agent/apps/desktop/electron/
-          cp apps/desktop/electron/remote-seed-connection.ts hermes-agent/apps/desktop/electron/
           python3 scripts/apply-patch.py \
-            hermes-agent/apps/desktop/electron/main.ts \
-            hermes-agent/apps/desktop/package.json
-
-      - name: Write optional seeded remote connection
-        shell: bash
-        env:
-          HERMES_GATEWAY_URL: ${{ secrets.HERMES_GATEWAY_URL }}
-        run: python3 scripts/write-seed.py hermes-agent/apps/desktop/build-resources/connection.seed.json "$HERMES_GATEWAY_URL" --allow-empty
+            hermes-agent/apps/desktop/electron/main.ts
 
       - name: Install deps and build
         working-directory: hermes-agent/apps/desktop
@@ -75,7 +67,7 @@ jobs:
           DESKTOP_BUILD_VERSION: ${{ steps.version.outputs.desktop_build_version }}
         run: npm run builder -- --publish never --config.extraMetadata.version="$DESKTOP_BUILD_VERSION"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: hermes-desktop-${{ matrix.os }}
           path: hermes-agent/apps/desktop/release/Hermes-*
@@ -86,14 +78,14 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Read pinned upstream and overlay versions
         id: version
         shell: bash
         run: python3 scripts/version-info.py --github-output "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true

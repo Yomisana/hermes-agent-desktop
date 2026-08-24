@@ -4,8 +4,7 @@
 // Rationale: some builds distribute a company-managed remote Hermes backend.
 // End users (often non-technical) should never trigger a local Python/Git/uv
 // install just because Desktop can't find a local runtime — they should
-// either already have a pre-seeded remote connection (see
-// remote-seed-connection.ts) or be told clearly to configure one.
+// configure their remote connection explicitly in Desktop settings.
 //
 // This file is intentionally the ONLY new file imported by main.ts. Keeping
 // the policy here (instead of inlining logic across main.ts) keeps the diff
@@ -39,9 +38,9 @@ export function shouldSkipAutoBootstrap(env: BootstrapPolicyEnv = process.env as
  */
 export function bootstrapSkippedError(activeRoot: string): Error {
   return new Error(
-    'This build of Hermes Desktop does not auto-install a local Hermes Agent runtime.\n\n' +
+      'This build of Hermes Desktop does not auto-install a local Hermes Agent runtime.\n\n' +
       '請至 Settings → Gateway → Remote gateway 設定遠端連線資訊，\n' +
-      '或聯絡資訊人員取得預先設定好的安裝檔。\n\n' +
+      '或聯絡 Server 管理者取得連線資訊。\n\n' +
       `(Local runtime would have been installed at: ${activeRoot})`
   )
 }
