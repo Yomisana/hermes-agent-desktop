@@ -72,16 +72,14 @@ Windows / macOS / Linux remote-only 安裝檔
 
 這裡的 Desktop 補丁只控制使用者電腦上的 App，目前只負責避免自動安裝本機 runtime。Server URL 由使用者在 App 裡設定。
 
-如果漏洞位於 Hermes Server API，例如跨 profile 讀取 session、寫入別人的 `SOUL.md`，只更新 Desktop **不會**修好。遠端 Server 本身也必須升級或 backport 官方修正。詳細狀態與處理方式請看 [Server 安全補丁說明](docs/SECURITY-BACKPORTS.md)。
+如果漏洞位於 Hermes Server API，例如跨 profile 讀取 session、寫入別人的 `SOUL.md`，只更新 Desktop **不會**修好。遠端 Server 本身也必須升級或 backport 官方修正。Server 候選 PR、作者歸屬、驗證與離線 Container 工具集中在獨立的 [Yomisana/hermes-agent-patches](https://github.com/Yomisana/hermes-agent-patches) 維護。
 
 ## 給維護者：版本與檔案
 
 - `upstream.json`：官方 repo、tag、tag object SHA、commit SHA、Desktop package version 及 overlay version。
-- `patches/manifest.json`：會套入 Desktop 的補丁，以及只供追蹤的 Server security issues/PRs。
+- `patches/manifest.json`：只記錄會套入 Desktop client 的補丁。
 - `scripts/apply-patch.py`：修改官方 `main.ts`；找不到唯一 anchor 時立即停止。
 - `scripts/version-info.py`：產生安裝檔版本及 release tag。
-- `server-backports.example.json`：Server backport manifest 範本；預設全部停用，不會盲目套 open PR。
-- `scripts/apply-server-backports.py`：在乾淨且 SHA 相符的 Hermes Agent checkout 套用已審查、鎖定 commit 的 backport。
 - `.github/workflows/sync-and-build.yml`：驗證、建置、打包及建立 draft release。
 
 這個公開建置流程不接受 `HERMES_GATEWAY_URL`，也不會把 Gateway URL 寫進安裝檔。使用者第一次開啟時需要自行設定連線，避免公開 repo 或公開 artifacts 意外帶入內部環境資訊。

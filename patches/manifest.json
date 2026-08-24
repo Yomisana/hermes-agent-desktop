@@ -9,31 +9,5 @@
       "apply": "scripts/apply-patch.py",
       "description": "Disable automatic local runtime bootstrap; users configure the remote gateway explicitly."
     }
-  ],
-  "upstreamSecurity": [
-    {
-      "issue": 76932,
-      "scope": "remote-server",
-      "status": "open-pr",
-      "pullRequests": [77125, 78423, 71037, 48652],
-      "includedInDesktopBuild": false,
-      "note": "Server-side profile enumeration and session disclosure. Several open PRs overlap; select one reviewed approach rather than combining them blindly."
-    },
-    {
-      "issue": 88897,
-      "scope": "remote-server",
-      "status": "open-pr",
-      "pullRequests": [89173],
-      "includedInDesktopBuild": false,
-      "note": "Server-side session database routing. Keep the company server patched until the PR is merged into the pinned upstream tag."
-    },
-    {
-      "issue": 91330,
-      "scope": "remote-server",
-      "status": "competing-open-prs",
-      "pullRequests": [91345, 91381],
-      "includedInDesktopBuild": false,
-      "note": "Cross-profile profile-management endpoints. Prefer tracking the broader #91381; do not resubmit either author's work."
-    }
   ]
 }
