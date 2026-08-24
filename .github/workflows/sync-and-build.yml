@@ -7,10 +7,6 @@ on:
   push:
     branches: [master]
 
-env:
-  UPSTREAM_REPO: https://github.com/NousResearch/hermes-agent.git
-  UPSTREAM_BRANCH: v2026.8.18
-
 jobs:
   build:
     strategy:
@@ -25,33 +21,45 @@ jobs:
         with:
           node-version: 22
 
+      - name: Read pinned upstream and overlay versions
+        id: version
+        shell: bash
+        run: python3 scripts/version-info.py --github-output "$GITHUB_OUTPUT"
+
       - name: Clone upstream hermes-agent
         shell: bash
         run: |
           for i in 1 2 3 4 5; do
-            git clone --depth 1 --branch "$UPSTREAM_BRANCH" "https://x-access-token:${{ github.token }}@github.com/NousResearch/hermes-agent.git" hermes-agent && exit 0
+            git clone --depth 1 --branch "${{ steps.version.outputs.upstream_tag }}" "https://x-access-token:${{ github.token }}@github.com/NousResearch/hermes-agent.git" hermes-agent && exit 0
             echo "clone attempt $i failed; retrying in 45s"
             sleep 45
           done
           exit 1
+
+      - name: Verify immutable upstream commit
+        shell: bash
+        run: |
+          actual=$(git -C hermes-agent rev-parse HEAD)
+          expected="${{ steps.version.outputs.upstream_sha }}"
+          if [ "$actual" != "$expected" ]; then
+            echo "Pinned tag resolved to $actual, expected $expected"
+            exit 1
+          fi
 
       - name: Apply remote-only patch
         shell: bash
         run: |
           cp apps/desktop/electron/remote-bootstrap-policy.ts hermes-agent/apps/desktop/electron/
           cp apps/desktop/electron/remote-seed-connection.ts hermes-agent/apps/desktop/electron/
-          python3 scripts/apply-patch.py hermes-agent/apps/desktop/electron/main.ts
+          python3 scripts/apply-patch.py \
+            hermes-agent/apps/desktop/electron/main.ts \
+            hermes-agent/apps/desktop/package.json
 
       - name: Write seeded remote connection (company gateway)
         shell: bash
-        run: |
-          mkdir -p hermes-agent/apps/desktop/build-resources
-          cat > hermes-agent/apps/desktop/build-resources/connection.seed.json << JSON
-          {
-            "mode": "remote",
-            "baseUrl": "${{ secrets.HERMES_GATEWAY_URL }}"
-          }
-          JSON
+        env:
+          HERMES_GATEWAY_URL: ${{ secrets.HERMES_GATEWAY_URL }}
+        run: python3 scripts/write-seed.py hermes-agent/apps/desktop/build-resources/connection.seed.json "$HERMES_GATEWAY_URL"
 
       - name: Install deps and build
         working-directory: hermes-agent/apps/desktop
@@ -63,7 +71,8 @@ jobs:
         working-directory: hermes-agent/apps/desktop
         env:
           HERMES_DESKTOP_REMOTE_ONLY: 'true'
-        run: npm run builder -- --publish never
+          DESKTOP_BUILD_VERSION: ${{ steps.version.outputs.desktop_build_version }}
+        run: npm run builder -- --publish never --config.extraMetadata.version="$DESKTOP_BUILD_VERSION"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -76,6 +85,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned upstream and overlay versions
+        id: version
+        shell: bash
+        run: python3 scripts/version-info.py --github-output "$GITHUB_OUTPUT"
+
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
@@ -89,9 +105,14 @@ jobs:
           if [ -z "$assets" ]; then
             echo "No packaged artifacts found; skipping release."; exit 0
           fi
-          gh release create "desktop-$(date +%Y%m%d-%H%M%S)" \
-            $assets \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft \
-            --generate-notes \
-            --title "Hermes Desktop (remote-only) — $(date +%Y-%m-%d)"
+          tag="${{ steps.version.outputs.release_tag }}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" $assets --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" \
+              $assets \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --generate-notes \
+              --title "Hermes Desktop $tag"
+          fi

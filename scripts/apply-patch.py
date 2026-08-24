@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Apply the remote-only bootstrap patch to upstream main.ts.
+"""Apply the remote-only desktop overlay to a pinned upstream checkout.
 
 String-anchored (not line-numbered) so it survives upstream drift; fails
 loudly if an anchor is missing or ambiguous instead of silently half-applying.
 """
+import json
 import sys
+from pathlib import Path
 
 
 def apply(path: str) -> None:
@@ -56,7 +58,26 @@ def apply(path: str) -> None:
     print("patch applied OK")
 
 
+def include_seed_resource(package_json_path: str) -> None:
+    path = Path(package_json_path)
+    package = json.loads(path.read_text(encoding="utf-8"))
+    resources = package["build"]["extraResources"]
+    seed = {"from": "build-resources/connection.seed.json", "to": "connection.seed.json"}
+
+    matching = [item for item in resources if item.get("to") == seed["to"]]
+    if matching:
+        if matching != [seed]:
+            sys.exit("connection.seed.json extraResource exists with an unexpected source")
+        print("seed resource already included")
+        return
+
+    resources.append(seed)
+    path.write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
+    print("seed resource included OK")
+
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit("usage: apply-patch.py <main.ts>")
+    if len(sys.argv) != 3:
+        sys.exit("usage: apply-patch.py <main.ts> <package.json>")
     apply(sys.argv[1])
+    include_seed_resource(sys.argv[2])

@@ -28,8 +28,21 @@ export interface SeedConnectionDeps {
 interface SeedPayload {
   mode: 'remote'
   baseUrl: string
-  token?: string
-  headers?: Record<string, string>
+}
+
+function parseSeedPayload(value: unknown): SeedPayload | null {
+  if (!value || typeof value !== 'object') return null
+
+  const baseUrl = (value as { baseUrl?: unknown }).baseUrl
+  if (typeof baseUrl !== 'string' || !baseUrl) return null
+
+  try {
+    const parsed = new URL(baseUrl)
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return null
+    return { mode: 'remote', baseUrl }
+  } catch {
+    return null
+  }
 }
 
 function readSeedFromEnv(env: NodeJS.ProcessEnv): SeedPayload | null {
@@ -40,9 +53,7 @@ function readSeedFromEnv(env: NodeJS.ProcessEnv): SeedPayload | null {
   try {
     const parsed = JSON.parse(raw)
 
-    if (parsed && typeof parsed.baseUrl === 'string' && parsed.baseUrl) {
-      return { mode: 'remote', baseUrl: parsed.baseUrl, token: parsed.token, headers: parsed.headers }
-    }
+    return parseSeedPayload(parsed)
   } catch {
     // malformed env JSON — ignore, fall through to file-based seed
   }
@@ -58,9 +69,7 @@ function readSeedFromFile(resourcesPath?: string): SeedPayload | null {
   try {
     const parsed = JSON.parse(fs.readFileSync(seedPath, 'utf8'))
 
-    if (parsed && typeof parsed.baseUrl === 'string' && parsed.baseUrl) {
-      return { mode: 'remote', baseUrl: parsed.baseUrl, token: parsed.token, headers: parsed.headers }
-    }
+    return parseSeedPayload(parsed)
   } catch {
     // not present / unreadable / malformed — no seed shipped with this build
   }
