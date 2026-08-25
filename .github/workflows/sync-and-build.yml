@@ -115,13 +115,28 @@ jobs:
             echo "No packaged artifacts found; skipping release."; exit 0
           fi
           tag="${{ steps.version.outputs.release_tag }}"
+
+          # A release tag is derived from upstream.json (tag + overlayVersion),
+          # so every push to master reuses it until overlayVersion is bumped.
+          # Refreshing a DRAFT is fine — it was never handed to anyone. Rewriting
+          # a PUBLISHED one silently swaps the bytes under a tag users already
+          # downloaded, so stop and make the operator bump overlayVersion.
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)
+            if [ "$is_draft" != "true" ]; then
+              echo "::error::$tag is already published. Bump overlayVersion in upstream.json (and the matching patches/manifest.json entry) instead of overwriting shipped binaries."
+              exit 1
+            fi
             gh release upload "$tag" $assets --repo "$GITHUB_REPOSITORY" --clobber
           else
+            # Draft + prerelease: it stays hidden until you publish it, and
+            # publishing surfaces it as a pre-release rather than displacing
+            # the current stable download on the repo front page.
             gh release create "$tag" \
               $assets \
               --repo "$GITHUB_REPOSITORY" \
               --draft \
+              --prerelease \
               --generate-notes \
               --title "Hermes Desktop $tag"
           fi
