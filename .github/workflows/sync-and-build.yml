@@ -53,11 +53,27 @@ jobs:
           python3 scripts/apply-patch.py \
             hermes-agent/apps/desktop/electron/main.ts
 
+      - name: Apply local-workspace-bridge patch
+        shell: bash
+        run: |
+          cp apps/desktop/electron/local-workspace-bridge.ts hermes-agent/apps/desktop/electron/
+          cp apps/desktop/electron/local-workspace-bridge.test.ts hermes-agent/apps/desktop/electron/
+          python3 scripts/apply-local-workspace-bridge.py \
+            hermes-agent/apps/desktop/electron/main.ts \
+            hermes-agent/apps/desktop/electron/preload.ts
+
       - name: Install deps and build
         working-directory: hermes-agent/apps/desktop
         run: |
           npm ci
           npm run build
+
+      # Guards the overlay itself: reconciliation, the ignore rules that keep
+      # credential files off the wire, and full sync passes against a fake
+      # gateway. Runs before packaging so a broken bridge never ships.
+      - name: Test local-workspace-bridge overlay
+        working-directory: hermes-agent/apps/desktop
+        run: npx vitest run --project electron electron/local-workspace-bridge.test.ts
 
       - name: Package with electron-builder
         working-directory: hermes-agent/apps/desktop

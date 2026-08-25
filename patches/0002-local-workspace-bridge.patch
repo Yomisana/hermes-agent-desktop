@@ -1,0 +1,83 @@
+From: Hermes Desktop Engineering <eng@hermes.local>
+Subject: [PATCH] feat(remote): mirror an authorized local folder to the remote agent
+
+
+Problem
+-------
+In remote-gateway mode upstream Hermes Desktop routes every filesystem
+operation to the gateway host (apps/desktop/src/lib/desktop-fs.ts —
+isDesktopFsRemoteMode() sends readDir / read-text / write-text / git-root /
+default-cwd and the directory picker to /api/fs/* and /api/files*), and the
+agent loop runs there too. The agent's cwd is therefore the SERVER's home
+(e.g. /home/username) and a local C:\... or \\wsl.localhost\... project
+folder is not part of the agent's world at all.
+
+Upstream tracks the missing capability as "split runtime" (issue #18715);
+/v1/capabilities still advertises runtime.split_runtime: false and none of
+the candidate PRs (#63966, #62518, #21791) have landed.
+
+
+Approach
+--------
+Mirror an AUTHORIZED local folder to a path on the gateway host, two-way, using
+only endpoints a stock Hermes server already serves — no server patch:
+
+  GET    /api/files?path=      list a remote directory (name/size/mtime)
+  GET    /api/files/read       read a remote file (data: URL)
+  POST   /api/files/upload     write a remote file (data: URL)
+  POST   /api/files/mkdir      create a remote directory
+  DELETE /api/files            delete a remote file
+
+The agent then works in the mirrored remote path as an ordinary project, which
+is what a shared cross-agent memory store needs. This is a mirror, not a mount:
+the agent reads a copy, one poll interval behind.
+
+All behavior lives in the new self-contained file
+apps/desktop/electron/local-workspace-bridge.ts. The upstream edits below are
+~25 lines across two files, so `git rebase upstream/main` has almost no
+conflict surface. With no config file present the build behaves byte-for-byte
+like upstream.
+
+
+--- a/apps/desktop/electron/main.ts
++++ b/apps/desktop/electron/main.ts
+@@
++import { BRIDGE_CONFIG_FILENAME, createBridgeRunner as createLocalWorkspaceBridge } from './local-workspace-bridge'
+ import { ensureMainWindow } from './main-window-lifecycle'
+@@
+ ipcMain.handle('hermes:workspace:sanitize', async (_event, cwd) => sanitizeWorkspaceCwd(cwd))
+
+
++// --- Local Workspace Bridge (remote-only overlay) ---------------------------
++const localWorkspaceBridgeConfigPath = () => path.join(app.getPath('userData'), BRIDGE_CONFIG_FILENAME)
++
++const localWorkspaceBridge = createLocalWorkspaceBridge({
++ api: request => handleHermesApiRequest(request),
++ configPath: localWorkspaceBridgeConfigPath(),
++ log: message => rememberLog(message),
++ stateDir: app.getPath('userData')
++})
++
++ipcMain.handle('hermes:local-bridge:status', () => localWorkspaceBridge.getStatus())
++ipcMain.handle('hermes:local-bridge:sync-now', () => localWorkspaceBridge.syncNow())
++ipcMain.handle('hermes:local-bridge:config-path', () => localWorkspaceBridgeConfigPath())
++ipcMain.handle('hermes:local-bridge:reload', () => {
++ localWorkspaceBridge.reload()
++
++ return localWorkspaceBridge.getStatus()
++})
++
++app.whenReady().then(() => localWorkspaceBridge.start())
++app.on('will-quit', () => localWorkspaceBridge.stop())
+
+
+--- a/apps/desktop/electron/preload.ts
++++ b/apps/desktop/electron/preload.ts
+@@
+ sanitizeWorkspaceCwd: cwd => ipcRenderer.invoke('hermes:workspace:sanitize', cwd),
++ localWorkspaceBridge: {
++ configPath: () => ipcRenderer.invoke('hermes:local-bridge:config-path'),
++ reload: () => ipcRenderer.invoke('hermes:local-bridge:reload'),
++ status: () => ipcRenderer.invoke('hermes:local-bridge:status'),
++ syncNow: () => ipcRenderer.invoke('hermes:local-bridge:sync-now')
++ },

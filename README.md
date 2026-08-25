@@ -68,6 +68,82 @@ Windows / macOS / Linux remote-only 安裝檔
 
 這個 repo 不會把整份 Hermes Agent 原始碼複製一份長期維護，因此比傳統 fork 更容易跟上官方版本。
 
+## Local Workspace Bridge（把本機資料夾授權給遠端 Agent）
+
+### 為什麼需要這個
+
+Hermes Desktop 連到 remote gateway 時，**所有**檔案操作都會送到 Server 那一端（見官方 `apps/desktop/src/lib/desktop-fs.ts`：`isDesktopFsRemoteMode()` 會把 readDir / read-text / write-text / git-root / default-cwd 以及資料夾選擇器全部導到 `/api/fs/*` 與 `/api/files*`），Agent loop 也跑在那裡。所以 Agent 的 pwd 是 **Server 的家目錄**（例如 `/home/username`），你電腦上的 `C:\...` 或 `\\wsl.localhost\...` 專案資料夾對 Agent 來說根本不存在。
+
+官方把這個缺口記在 [#18715 Support remote Hermes agent with local tool execution](https://github.com/NousResearch/hermes-agent/issues/18715)。`/v1/capabilities` 至今仍回報 `runtime.split_runtime: false`，候選 PR（[#63966](https://github.com/NousResearch/hermes-agent/pull/63966)、[#62518](https://github.com/NousResearch/hermes-agent/pull/62518)、[#21791](https://github.com/NousResearch/hermes-agent/pull/21791)）都還沒合併。
+
+### 這個 overlay 做什麼
+
+把一個**你明確授權**的本機資料夾，雙向鏡像到 gateway 主機上的某個路徑，只用 stock Hermes Server 已經提供的 API，**不需要對 Server 打任何補丁**：
+
+| 用途 | Endpoint |
+| --- | --- |
+| 列出遠端目錄 | `GET /api/files?path=` |
+| 讀遠端檔案 | `GET /api/files/read` |
+| 寫遠端檔案 | `POST /api/files/upload` |
+| 建遠端目錄 | `POST /api/files/mkdir` |
+| 刪遠端檔案 | `DELETE /api/files` |
+
+Agent 之後就在那個遠端路徑上工作，跟一般專案沒兩樣——跨 Agent 共通記憶庫要的就是這個。
+
+**這是鏡像，不是掛載。** Agent 讀到的是副本，最多落後一個輪詢週期。真正的掛載需要 Server 把 tool call 轉回 client 執行，那是 Desktop-only overlay 做不到的事。
+
+### 設定方式
+
+第一次啟動會在 userData 目錄自動產生 `local-workspace-bridge.json` 範本：
+
+- Windows：`%APPDATA%\Hermes\local-workspace-bridge.json`
+- macOS：`~/Library/Application Support/Hermes/local-workspace-bridge.json`
+- Linux：`~/.config/Hermes/local-workspace-bridge.json`
+
+```json
+{
+  "enabled": true,
+  "intervalSeconds": 10,
+  "maxFileBytes": 2097152,
+  "maxFiles": 5000,
+  "ignore": ["*.log"],
+  "mounts": [
+    {
+      "id": "shared-memory",
+      "localPath": "\\\\wsl.localhost\\Ubuntu\\home\\me\\code-project\\shared-memory",
+      "remotePath": "/home/username/bridge/shared-memory",
+      "mode": "two-way"
+    }
+  ]
+}
+```
+
+- `localPath`：本機路徑。Windows（`C:\src\app`）、UNC（`\\wsl.localhost\Ubuntu\home\me\app`）或 POSIX（`/home/me/app`、`/mnt/c/src/app`）都可以；POSIX 路徑在 Windows 上會自動轉成 UNC / 磁碟機形式，所以 **WSL 專案資料夾可以直接授權**。
+- `remotePath`：gateway 主機上的絕對路徑。把 Agent 的 workspace cwd 指到這裡。
+- `mode`：`two-way`（預設）、`push`（只上傳）、`pull`（只下載）。
+- `profile`（選填）：指定要同步到哪個 Desktop 連線 profile。
+
+改完設定重開 App，或在 DevTools console 執行 `window.hermesDesktop.localWorkspaceBridge.reload()`。另外還有 `status()` 與 `syncNow()` 可用。
+
+### 安全與限制
+
+- **預設關閉。** 沒有設定檔、或 `enabled` 不是 `true` 時，行為跟官方版本完全一樣。
+- **`.env`、`.envrc`、`auth.json`、`credentials.json` 永遠不同步**，兩個方向都是。這不只是安全考量：Server 的 managed-files API 會把這些檔案從 list/read 隱藏（`_is_sensitive_path`），一旦上傳，下一輪就會被判定成「遠端已刪除」而把你本機的原檔刪掉。
+- `.git`、`node_modules`、`.venv`、`__pycache__`、`dist`、`build`、`target` 等預設排除。
+- Symlink 一律不跟隨，避免鏡像範圍逃出授權目錄。
+- 單檔上限預設 2 MiB（硬上限 16 MiB）、單一 mount 檔案數上限預設 5000，超過就中止並回報，不會半套。
+- 目錄只建立、不刪除。多留一個空目錄無害，誤判成遞迴刪除則不然。
+- 兩邊同時改到同一個檔案時採「較新的贏」，較舊的那份會存成同目錄下的 `<檔名>.conflict-<時間戳>`，**不會靜默丟資料**。
+- 本機資料夾讀不到時（WSL distro 名稱錯、磁碟未掛載）該 mount 直接報錯並跳過，不會因為掃到空目錄就把遠端整份刪掉。
+
+### 測試
+
+```bash
+npx vitest run --project electron electron/local-workspace-bridge.test.ts
+```
+
+31 個測試涵蓋路徑轉換、ignore 規則、設定驗證、reconcile 決策，以及對一個模擬 gateway 的完整同步流程（首次上傳、Agent 端新增檔案、穩態零傳輸、雙向刪除、衝突保留、憑證檔不外流）。CI 在打包前會跑這個測試。
+
 ## Desktop 補丁與 Server 補丁是兩件事
 
 這裡的 Desktop 補丁只控制使用者電腦上的 App，目前只負責避免自動安裝本機 runtime。Server URL 由使用者在 App 裡設定。
@@ -79,6 +155,8 @@ Windows / macOS / Linux remote-only 安裝檔
 - `upstream.json`：官方 repo、tag、tag object SHA、commit SHA、Desktop package version 及 overlay version。
 - `patches/manifest.json`：只記錄會套入 Desktop client 的補丁。
 - `scripts/apply-patch.py`：修改官方 `main.ts`；找不到唯一 anchor 時立即停止。
+- `scripts/apply-local-workspace-bridge.py`：接上 Local Workspace Bridge（`main.ts` + `preload.ts`）；同樣是字串錨點、找不到唯一 anchor 就停。
+- `apps/desktop/electron/local-workspace-bridge.ts`：Bridge 全部的行為都在這一個獨立檔案，官方檔案只被改約 25 行，rebase 衝突面極小。
 - `scripts/version-info.py`：產生安裝檔版本及 release tag。
 - `.github/workflows/sync-and-build.yml`：驗證、建置、打包及建立 draft release。
 

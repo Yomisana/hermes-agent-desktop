@@ -8,6 +8,21 @@
       "status": "local",
       "apply": "scripts/apply-patch.py",
       "description": "Disable automatic local runtime bootstrap; users configure the remote gateway explicitly."
+    },
+    {
+      "id": "local-workspace-bridge",
+      "version": 1,
+      "scope": "desktop-client",
+      "status": "local",
+      "apply": "scripts/apply-local-workspace-bridge.py",
+      "files": [
+        "apps/desktop/electron/local-workspace-bridge.ts"
+      ],
+      "tests": [
+        "apps/desktop/electron/local-workspace-bridge.test.ts"
+      ],
+      "description": "Mirror an authorized local folder to the gateway host so a remote agent can read and write it. Uses only stock managed-files endpoints; no server patch required. Off unless local-workspace-bridge.json enables it.",
+      "upstreamIssue": "https://github.com/NousResearch/hermes-agent/issues/18715"
     }
   ]
 }
