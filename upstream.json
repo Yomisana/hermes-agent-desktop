@@ -1,8 +1,8 @@
 {
   "repository": "https://github.com/NousResearch/hermes-agent.git",
-  "tag": "v2026.8.18",
-  "tagObjectSha": "9f13bbbf8423427e159c78066356ca0e27ca6b74",
-  "commitSha": "e624e9fde561e1add9388384012b295fde669ade",
+  "tag": "v2026.8.31",
+  "tagObjectSha": "6e8f8418e6378eb2617e4de074e13dedd091b8af",
+  "commitSha": "29112bef099274229cadff79cdff7bf7b99c4b77",
   "desktopPackageVersion": "0.17.0",
-  "overlayVersion": 3
+  "overlayVersion": 1
 }
