@@ -4,7 +4,7 @@
 Three inputs decide the release tag:
 
 * the newest tag on the upstream repository — a new upstream release resets
-  the overlay counter, because the binaries are rebuilt from new sources;
+  the overlay counter to 0, because the binaries are rebuilt from new sources;
 * the commits landed in this repository since the last version bump — overlay
   changes that nobody has released yet need a fresh tag;
 * the tags already published on this repository — a published tag is immutable,
@@ -30,6 +30,8 @@ OVERLAY_PATCH_ID = "desktop-remote-only"
 # Upstream ships calendar tags (v2026.8.18); anything else is ignored so a
 # stray refs/tags/nightly cannot drag the pin forward.
 TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+# A fresh upstream tag starts here; +1 per overlay change after that.
+OVERLAY_BASE = 0
 MAX_OVERLAY_PROBE = 50
 
 
@@ -146,10 +148,12 @@ def resolve(args: argparse.Namespace) -> dict[str, str | int]:
             desktop_version = upstream_desktop_version(
                 upstream["repository"], tag, desktop_version
             )
-            # New upstream sources: the overlay counter starts over at 1.
-            overlay_version = 1
+            # New upstream sources: the overlay counter starts over at 0, so
+            # `-remote.0` is the plain rebuild of the new upstream tag and every
+            # later number is an overlay change made on top of it.
+            overlay_version = OVERLAY_BASE
             upstream_changed = True
-            print(f"upstream advanced to {tag}; overlay reset to 1")
+            print(f"upstream advanced to {tag}; overlay reset to {OVERLAY_BASE}")
 
     if not upstream_changed and args.count_local_commits and has_local_commits_since_last_bump():
         overlay_version += 1
