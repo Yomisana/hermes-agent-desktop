@@ -3,6 +3,6 @@
   "tag": "v2026.8.31",
   "tagObjectSha": "6e8f8418e6378eb2617e4de074e13dedd091b8af",
   "commitSha": "29112bef099274229cadff79cdff7bf7b99c4b77",
-  "desktopPackageVersion": "0.17.0",
+  "upstreamVersion": "0.21.0",
   "overlayVersion": 0
 }

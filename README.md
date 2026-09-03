@@ -60,7 +60,7 @@ Windows / macOS / Linux remote-only 安裝檔
 每次建置時，GitHub Actions 會：
 
 1. 讀取 `upstream.json`，並向官方 repo 查詢是否有更新的 release tag：
-   - 有新 tag：改用新 tag（含 commit SHA、Desktop package version），`overlayVersion` 重設為 `0`（`-remote.0` 就是「新官方 tag 的原樣重build」，之後每次 overlay 改動才往上加）。
+   - 有新 tag：改用新 tag（含 commit SHA、官方版本號），`overlayVersion` 重設為 `0`（`-remote.0` 就是「新官方 tag 的原樣重build」，之後每次 overlay 改動才往上加）。
    - 沒有新 tag，但本 repo 在上次版本更新之後還有新 commit：`overlayVersion` 自動 +1。
    - 若算出來的 release tag 已經是「已發佈」狀態，會繼續往後找到還沒被用掉的號碼，不會覆蓋既有安裝檔、也不會讓 CI 失敗。
    - 結果會由 CI 自動 commit 回 `upstream.json` 與 `patches/manifest.json`（訊息帶 `[skip ci]`）。
@@ -156,7 +156,7 @@ npx vitest run --project electron electron/local-workspace-bridge.test.ts
 
 ## 給維護者：版本與檔案
 
-- `upstream.json`：官方 repo、tag、tag object SHA、commit SHA、Desktop package version 及 overlay version。
+- `upstream.json`：官方 repo、tag、tag object SHA、commit SHA、官方版本號（`upstreamVersion`，取自官方 `hermes_cli/__init__.py` 的 `__version__`；`apps/desktop/package.json` 長期停在 0.17.0 不能用）及 overlay version。
 - `patches/manifest.json`：只記錄會套入 Desktop client 的補丁。
 - `scripts/apply-patch.py`：修改官方 `main.ts`；找不到唯一 anchor 時立即停止。
 - `scripts/apply-local-workspace-bridge.py`：接上 Local Workspace Bridge（`main.ts` + `preload.ts`）；同樣是字串錨點、找不到唯一 anchor 就停。
@@ -169,7 +169,7 @@ npx vitest run --project electron electron/local-workspace-bridge.test.ts
 ## 升級官方 Hermes Agent
 
 1. 選擇正式的官方 release tag，不直接追蹤每天變動的 `main`。
-2. 更新 `upstream.json` 裡的 tag、完整 commit SHA 與 Desktop package version（平常由 CI 自動處理；要手動先跑一次可用 `python3 scripts/resolve-version.py --refresh-upstream --write`）。
+2. 更新 `upstream.json` 裡的 tag、完整 commit SHA 與 `upstreamVersion`（平常由 CI 自動處理；要手動先跑一次可用 `python3 scripts/resolve-version.py --refresh-upstream --write`）。
 3. 在該 tag 上套用補丁並完成測試。
 4. `overlayVersion` 由 CI 自動維護：官方換新 tag 時歸 `0`，只有本 repo 改動時 +1；手動調整時記得同步 `patches/manifest.json` 的 `desktop-remote-only`。
 5. 若官方版本已包含相同行為，先驗證後再移除對應 overlay。

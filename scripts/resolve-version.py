@@ -30,9 +30,32 @@ OVERLAY_PATCH_ID = "desktop-remote-only"
 # Upstream ships calendar tags (v2026.8.18); anything else is ignored so a
 # stray refs/tags/nightly cannot drag the pin forward.
 TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+def _python_version(blob: str) -> str | None:
+    match = re.search(r'^__version__\s*=\s*["\'](.+?)["\']', blob, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def _toml_version(blob: str) -> str | None:
+    match = re.search(r'^version\s*=\s*["\'](.+?)["\']', blob, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def _json_version(blob: str) -> str | None:
+    try:
+        return json.loads(blob).get("version")
+    except json.JSONDecodeError:
+        return None
+
+
+# Tried in order; the first hit wins.
+VERSION_SOURCES = (
+    ("hermes_cli/__init__.py", _python_version),
+    ("pyproject.toml", _toml_version),
+    ("apps/desktop/package.json", _json_version),
+)
+
 # A fresh upstream tag starts here; +1 per overlay change after that.
 OVERLAY_BASE = 0
-MAX_OVERLAY_PROBE = 50
 
 
 def run(cmd: list[str], *, check: bool = True) -> str:
@@ -89,8 +112,15 @@ def latest_upstream_tag(repository: str) -> tuple[str, str, str] | None:
     return newest, tag_object, peeled.get(newest, tag_object)
 
 
-def upstream_desktop_version(repository: str, tag: str, fallback: str) -> str:
-    """Read apps/desktop/package.json at `tag` without a full clone."""
+def read_upstream_version(repository: str, tag: str, fallback: str) -> str:
+    """Read the product version upstream ships at `tag`, without a full clone.
+
+    apps/desktop/package.json is NOT the source of truth: it has sat at 0.17.0
+    across releases while hermes_cli/__init__.py tracked the actual version
+    (0.20.4 at v2026.8.18, 0.21.0 at v2026.8.31). Read the Python version first
+    and fall back down the chain, so the installer version matches the release
+    users think they are getting.
+    """
     if not shutil.which("git"):
         return fallback
     workdir = ROOT / ".upstream-probe"
@@ -98,10 +128,19 @@ def upstream_desktop_version(repository: str, tag: str, fallback: str) -> str:
     try:
         run(["git", "clone", "--depth", "1", "--branch", tag, "--filter=blob:none",
              "--no-checkout", repository, str(workdir)])
-        blob = run(["git", "-C", str(workdir), "show", f"{tag}:apps/desktop/package.json"])
-        return json.loads(blob)["version"]
-    except (SystemExit, json.JSONDecodeError, KeyError):
-        print(f"::warning::could not read desktop package version at {tag}; keeping {fallback}")
+        for path, extract in VERSION_SOURCES:
+            try:
+                blob = run(["git", "-C", str(workdir), "show", f"{tag}:{path}"])
+            except SystemExit:
+                continue  # file absent at this tag; try the next source
+            version = extract(blob)
+            if version:
+                print(f"upstream version {version} (from {path})")
+                return version
+        print(f"::warning::no version source found at {tag}; keeping {fallback}")
+        return fallback
+    except SystemExit:
+        print(f"::warning::could not read the upstream version at {tag}; keeping {fallback}")
         return fallback
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -117,18 +156,32 @@ def has_local_commits_since_last_bump() -> bool:
     return count.isdigit() and int(count) > 0
 
 
-def published_tags(repo_slug: str) -> set[str]:
-    """Release tags on this repo that are no longer drafts, hence immutable."""
+def published_overlays(repo_slug: str, tag_version: str) -> set[int]:
+    """Overlay numbers already published for this upstream version.
+
+    Drafts are excluded: nobody has downloaded them, so a draft may be
+    refreshed in place. Published releases are immutable.
+    """
     if not shutil.which("gh"):
         print("::warning::gh is unavailable; skipping the published-release probe")
         return set()
     raw = run(["gh", "release", "list", "--repo", repo_slug, "--limit", "200",
                "--json", "tagName,isDraft"], check=False)
     try:
-        return {r["tagName"] for r in json.loads(raw or "[]") if not r["isDraft"]}
+        releases = json.loads(raw or "[]")
     except json.JSONDecodeError:
         print("::warning::could not list releases; skipping the published-release probe")
         return set()
+
+    prefix = f"v{tag_version}-remote."
+    found = set()
+    for release in releases:
+        if release["isDraft"] or not release["tagName"].startswith(prefix):
+            continue
+        suffix = release["tagName"][len(prefix):]
+        if suffix.isdigit():
+            found.add(int(suffix))
+    return found
 
 
 def resolve(args: argparse.Namespace) -> dict[str, str | int]:
@@ -137,7 +190,10 @@ def resolve(args: argparse.Namespace) -> dict[str, str | int]:
     tag = upstream["tag"]
     tag_object_sha = upstream["tagObjectSha"]
     commit_sha = upstream["commitSha"]
-    desktop_version = upstream["desktopPackageVersion"]
+    # desktopPackageVersion is the old key name, still honoured for hand-edited pins.
+    upstream_version = upstream.get("upstreamVersion") or upstream.get("desktopPackageVersion")
+    if not upstream_version:
+        raise SystemExit("upstream.json needs an upstreamVersion")
     overlay_version = int(upstream["overlayVersion"])
     upstream_changed = False
 
@@ -145,9 +201,6 @@ def resolve(args: argparse.Namespace) -> dict[str, str | int]:
         found = latest_upstream_tag(upstream["repository"])
         if found and tag_sort_key(found[0]) > tag_sort_key(tag):
             tag, tag_object_sha, commit_sha = found
-            desktop_version = upstream_desktop_version(
-                upstream["repository"], tag, desktop_version
-            )
             # New upstream sources: the overlay counter starts over at 0, so
             # `-remote.0` is the plain rebuild of the new upstream tag and every
             # later number is an overlay change made on top of it.
@@ -155,35 +208,50 @@ def resolve(args: argparse.Namespace) -> dict[str, str | int]:
             upstream_changed = True
             print(f"upstream advanced to {tag}; overlay reset to {OVERLAY_BASE}")
 
+        # Re-read on every refresh, not only when the tag moves: a pin written
+        # before this probe existed can carry a stale version.
+        upstream_version = read_upstream_version(
+            upstream["repository"], tag, upstream_version
+        )
+
     if not upstream_changed and args.count_local_commits and has_local_commits_since_last_bump():
         overlay_version += 1
         print(f"local commits since the last bump; overlay -> {overlay_version}")
 
     tag_version = tag[1:]
     if args.probe_releases:
-        taken = published_tags(args.repo_slug or os.environ.get("GITHUB_REPOSITORY", ""))
-        probed = 0
-        while f"v{tag_version}-remote.{overlay_version}" in taken:
-            overlay_version += 1
-            probed += 1
-            if probed > MAX_OVERLAY_PROBE:
-                raise SystemExit("could not find a free overlay version")
-        if probed:
-            print(f"skipped {probed} published tag(s); overlay -> {overlay_version}")
+        taken = published_overlays(
+            args.repo_slug or os.environ.get("GITHUB_REPOSITORY", ""), tag_version
+        )
+        if overlay_version in taken:
+            # A published tag is immutable, and its binaries are already out
+            # there. Land above the highest one rather than filling a gap, so
+            # the numbers stay monotonic for anyone reading the release list.
+            overlay_version = max(taken) + 1
+            print(f"overlay already published; overlay -> {overlay_version}")
 
     changed = (
         tag != upstream["tag"]
         or commit_sha != upstream["commitSha"]
         or overlay_version != upstream["overlayVersion"]
+        or upstream_version != upstream.get("upstreamVersion")
     )
     if changed and args.write:
+        upstream.pop("desktopPackageVersion", None)
         upstream.update({
             "tag": tag,
             "tagObjectSha": tag_object_sha,
             "commitSha": commit_sha,
-            "desktopPackageVersion": desktop_version,
+            "upstreamVersion": upstream_version,
             "overlayVersion": overlay_version,
         })
+        # Keep the file in a stable, readable order regardless of what the
+        # previous pin looked like.
+        order = ["repository", "tag", "tagObjectSha", "commitSha",
+                 "upstreamVersion", "overlayVersion"]
+        upstream = {k: upstream[k] for k in order if k in upstream} | {
+            k: v for k, v in upstream.items() if k not in order
+        }
         overlay["version"] = overlay_version
         UPSTREAM_JSON.write_text(json.dumps(upstream, indent=2) + "\n", encoding="utf-8")
         MANIFEST_JSON.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -195,7 +263,8 @@ def resolve(args: argparse.Namespace) -> dict[str, str | int]:
         "overlay_version": overlay_version,
         "upstream_changed": "true" if upstream_changed else "false",
         "state_changed": "true" if changed else "false",
-        "desktop_build_version": f"{desktop_version}-remote.{overlay_version}",
+        "upstream_version": upstream_version,
+        "desktop_build_version": f"{upstream_version}-remote.{overlay_version}",
         "release_tag": f"v{tag_version}-remote.{overlay_version}",
     }
 
