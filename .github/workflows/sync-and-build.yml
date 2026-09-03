@@ -7,8 +7,64 @@ on:
   push:
     branches: [master]
 
+concurrency:
+  # Two runs resolving the overlay version at the same time would race for the
+  # same release tag, so releases are serialised and stale runs are dropped.
+  group: build-desktop-release
+  cancel-in-progress: false
+
 jobs:
+  # Single source of truth for "what are we building and what will we call it".
+  # Everything downstream consumes these outputs instead of re-reading
+  # upstream.json, so the pin cannot shift between jobs mid-run.
+  resolve:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      upstream_tag: ${{ steps.version.outputs.upstream_tag }}
+      upstream_sha: ${{ steps.version.outputs.upstream_sha }}
+      overlay_version: ${{ steps.version.outputs.overlay_version }}
+      upstream_changed: ${{ steps.version.outputs.upstream_changed }}
+      state_changed: ${{ steps.version.outputs.state_changed }}
+      desktop_build_version: ${{ steps.version.outputs.desktop_build_version }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history: the overlay bump looks at commits since upstream.json
+          # last changed.
+          fetch-depth: 0
+
+      - name: Resolve upstream pin and overlay version
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/resolve-version.py \
+            --refresh-upstream \
+            --count-local-commits \
+            --probe-releases \
+            --write \
+            --github-output "$GITHUB_OUTPUT"
+
+      # Persist the resolved pin so the next run starts from it instead of
+      # re-deriving the same bump. Best effort: a protected branch just means
+      # the operator lands it by hand, it must not fail the build.
+      - name: Commit resolved versions
+        if: steps.version.outputs.state_changed == 'true' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add upstream.json patches/manifest.json
+          git commit -m "chore(release): pin ${{ steps.version.outputs.upstream_tag }} overlay ${{ steps.version.outputs.overlay_version }} [skip ci]"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}" \
+            || echo "::warning::could not push the resolved versions; update upstream.json manually"
+
   build:
+    needs: resolve
     strategy:
       fail-fast: false
       matrix:
@@ -21,16 +77,11 @@ jobs:
         with:
           node-version: 22
 
-      - name: Read pinned upstream and overlay versions
-        id: version
-        shell: bash
-        run: python3 scripts/version-info.py --github-output "$GITHUB_OUTPUT"
-
       - name: Clone upstream hermes-agent
         shell: bash
         run: |
           for i in 1 2 3 4 5; do
-            git clone --depth 1 --branch "${{ steps.version.outputs.upstream_tag }}" "https://x-access-token:${{ github.token }}@github.com/NousResearch/hermes-agent.git" hermes-agent && exit 0
+            git clone --depth 1 --branch "${{ needs.resolve.outputs.upstream_tag }}" "https://x-access-token:${{ github.token }}@github.com/NousResearch/hermes-agent.git" hermes-agent && exit 0
             echo "clone attempt $i failed; retrying in 45s"
             sleep 45
           done
@@ -40,7 +91,7 @@ jobs:
         shell: bash
         run: |
           actual=$(git -C hermes-agent rev-parse HEAD)
-          expected="${{ steps.version.outputs.upstream_sha }}"
+          expected="${{ needs.resolve.outputs.upstream_sha }}"
           if [ "$actual" != "$expected" ]; then
             echo "Pinned tag resolved to $actual, expected $expected"
             exit 1
@@ -80,7 +131,7 @@ jobs:
         shell: bash
         env:
           HERMES_DESKTOP_REMOTE_ONLY: 'true'
-          DESKTOP_BUILD_VERSION: ${{ steps.version.outputs.desktop_build_version }}
+          DESKTOP_BUILD_VERSION: ${{ needs.resolve.outputs.desktop_build_version }}
         run: npm run builder -- --publish never --config.extraMetadata.version="$DESKTOP_BUILD_VERSION"
 
       - uses: actions/upload-artifact@v7
@@ -89,18 +140,11 @@ jobs:
           path: hermes-agent/apps/desktop/release/Hermes-*
 
   draft-release:
-    needs: build
+    needs: [resolve, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Read pinned upstream and overlay versions
-        id: version
-        shell: bash
-        run: python3 scripts/version-info.py --github-output "$GITHUB_OUTPUT"
-
       - uses: actions/download-artifact@v8
         with:
           path: release-assets
@@ -109,34 +153,33 @@ jobs:
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.release_tag }}
         run: |
           assets=$(find release-assets -type f -name 'Hermes-*' | tr '\n' ' ')
           if [ -z "$assets" ]; then
             echo "No packaged artifacts found; skipping release."; exit 0
           fi
-          tag="${{ steps.version.outputs.release_tag }}"
 
-          # A release tag is derived from upstream.json (tag + overlayVersion),
-          # so every push to master reuses it until overlayVersion is bumped.
-          # Refreshing a DRAFT is fine — it was never handed to anyone. Rewriting
-          # a PUBLISHED one silently swaps the bytes under a tag users already
-          # downloaded, so stop and make the operator bump overlayVersion.
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            is_draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)
+          # resolve() already walked past every published tag, so an existing
+          # release here is a draft we own and may refresh. A published one can
+          # only mean a race with a concurrent run; leave the shipped bytes
+          # alone and let the next run pick the next free overlay version.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)
             if [ "$is_draft" != "true" ]; then
-              echo "::error::$tag is already published. Bump overlayVersion in upstream.json (and the matching patches/manifest.json entry) instead of overwriting shipped binaries."
-              exit 1
+              echo "::warning::$TAG was published while this run was building; keeping the shipped binaries and skipping the upload."
+              exit 0
             fi
-            gh release upload "$tag" $assets --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" $assets --repo "$GITHUB_REPOSITORY" --clobber
           else
             # Draft + prerelease: it stays hidden until you publish it, and
             # publishing surfaces it as a pre-release rather than displacing
             # the current stable download on the repo front page.
-            gh release create "$tag" \
+            gh release create "$TAG" \
               $assets \
               --repo "$GITHUB_REPOSITORY" \
               --draft \
               --prerelease \
               --generate-notes \
-              --title "Hermes Desktop $tag"
+              --title "Hermes Desktop $TAG"
           fi

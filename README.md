@@ -59,7 +59,11 @@ Windows / macOS / Linux remote-only 安裝檔
 
 每次建置時，GitHub Actions 會：
 
-1. 讀取 `upstream.json`，取得指定的官方 tag 與 commit。
+1. 讀取 `upstream.json`，並向官方 repo 查詢是否有更新的 release tag：
+   - 有新 tag：改用新 tag（含 commit SHA、Desktop package version），`overlayVersion` 重設為 `1`。
+   - 沒有新 tag，但本 repo 在上次版本更新之後還有新 commit：`overlayVersion` 自動 +1。
+   - 若算出來的 release tag 已經是「已發佈」狀態，會繼續往後找到還沒被用掉的號碼，不會覆蓋既有安裝檔、也不會讓 CI 失敗。
+   - 結果會由 CI 自動 commit 回 `upstream.json` 與 `patches/manifest.json`（訊息帶 `[skip ci]`）。
 2. 從 Nous Research 下載乾淨的 Hermes Agent 原始碼。
 3. 驗證 commit SHA，防止同名 tag 指到不同內容。
 4. 套用本 repo 的 Desktop overlay。
@@ -157,7 +161,7 @@ npx vitest run --project electron electron/local-workspace-bridge.test.ts
 - `scripts/apply-patch.py`：修改官方 `main.ts`；找不到唯一 anchor 時立即停止。
 - `scripts/apply-local-workspace-bridge.py`：接上 Local Workspace Bridge（`main.ts` + `preload.ts`）；同樣是字串錨點、找不到唯一 anchor 就停。
 - `apps/desktop/electron/local-workspace-bridge.ts`：Bridge 全部的行為都在這一個獨立檔案，官方檔案只被改約 25 行，rebase 衝突面極小。
-- `scripts/version-info.py`：產生安裝檔版本及 release tag。
+- `scripts/resolve-version.py`：決定要建置的官方 tag 與 `overlayVersion`，並產生安裝檔版本及 release tag。不加參數時只讀 `upstream.json`（離線），CI 才會帶 `--refresh-upstream --count-local-commits --probe-releases --write`。
 - `.github/workflows/sync-and-build.yml`：驗證、建置、打包及建立 draft release。
 
 這個公開建置流程不接受 `HERMES_GATEWAY_URL`，也不會把 Gateway URL 寫進安裝檔。使用者第一次開啟時需要自行設定連線，避免公開 repo 或公開 artifacts 意外帶入內部環境資訊。
@@ -165,9 +169,9 @@ npx vitest run --project electron electron/local-workspace-bridge.test.ts
 ## 升級官方 Hermes Agent
 
 1. 選擇正式的官方 release tag，不直接追蹤每天變動的 `main`。
-2. 更新 `upstream.json` 裡的 tag、完整 commit SHA 與 Desktop package version。
+2. 更新 `upstream.json` 裡的 tag、完整 commit SHA 與 Desktop package version（平常由 CI 自動處理；要手動先跑一次可用 `python3 scripts/resolve-version.py --refresh-upstream --write`）。
 3. 在該 tag 上套用補丁並完成測試。
-4. 若 overlay 內容改變，增加 `overlayVersion`。
+4. `overlayVersion` 由 CI 自動維護：官方換新 tag 時歸 `1`，只有本 repo 改動時 +1；手動調整時記得同步 `patches/manifest.json` 的 `desktop-remote-only`。
 5. 若官方版本已包含相同行為，先驗證後再移除對應 overlay。
 
 「有人開了 PR」不代表已經可以移除補丁。必須等 PR 合併，而且修正已包含在目前鎖定的官方 tag。
