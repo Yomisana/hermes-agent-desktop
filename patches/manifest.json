@@ -3,7 +3,7 @@
   "patches": [
     {
       "id": "desktop-remote-only",
-      "version": 0,
+      "version": 3,
       "scope": "desktop-client",
       "status": "local",
       "apply": "scripts/apply-patch.py",
