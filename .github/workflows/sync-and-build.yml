@@ -135,6 +135,11 @@ jobs:
       # gateway. Runs before packaging so a broken bridge never ships.
       - name: Test overlays
         working-directory: hermes-agent/apps/desktop
+        # shell: bash matters here — the default Windows shell is pwsh, where a
+        # trailing backslash is not a line continuation, so the file filters
+        # would be dropped and the whole upstream electron suite would run
+        # (several of its POSIX-only file-mode tests fail on Windows).
+        shell: bash
         run: |
           npx vitest run --project electron \
             electron/local-workspace-bridge.test.ts \
