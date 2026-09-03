@@ -60,7 +60,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add upstream.json patches/manifest.json
           git commit -m "chore(release): pin ${{ steps.version.outputs.upstream_tag }} overlay ${{ steps.version.outputs.overlay_version }} [skip ci]"
-          git push origin "HEAD:${{ github.event.repository.default_branch }}" \
+          git push origin "HEAD:${{ github.ref_name }}" \
             || echo "::warning::could not push the resolved versions; update upstream.json manually"
 
   build:
@@ -101,6 +101,7 @@ jobs:
         shell: bash
         run: |
           cp apps/desktop/electron/remote-bootstrap-policy.ts hermes-agent/apps/desktop/electron/
+          cp apps/desktop/electron/remote-bootstrap-policy.test.ts hermes-agent/apps/desktop/electron/
           python3 scripts/apply-patch.py \
             hermes-agent/apps/desktop/electron/main.ts
 
@@ -137,14 +138,15 @@ jobs:
         run: |
           npx vitest run --project electron \
             electron/local-workspace-bridge.test.ts \
-            electron/release-update-source.test.ts
+            electron/release-update-source.test.ts \
+            electron/remote-bootstrap-policy.test.ts
 
       - name: Package with electron-builder
         working-directory: hermes-agent/apps/desktop
         shell: bash
         env:
-          HERMES_DESKTOP_REMOTE_ONLY: 'true'
           DESKTOP_BUILD_VERSION: ${{ needs.resolve.outputs.desktop_build_version }}
+          UPDATE_OWNER: ${{ github.repository_owner }}
         run: |
           # Upstream's scripts/run-electron-builder.mjs already prepends
           # `--publish never` (CI=1 otherwise makes electron-builder resolve a
@@ -153,11 +155,45 @@ jobs:
           # "never" — electron-builder then falls back to publishing and dies
           # on "GitHub Personal Access Token is not set". So only add the flag
           # when the wrapper that pins it is absent.
+          # electron-builder writes resources/app-update.yml from whatever publish
+          # target it can infer, and upstream's package.json "repository" field
+          # makes that NousResearch/hermes-agent — the wrong place for these
+          # installers. Name our own repo instead; --publish never still means
+          # nothing is uploaded, only the metadata changes.
+          UPDATE_REPO=${GITHUB_REPOSITORY#*/}
+          target=(
+            --config.extraMetadata.version="$DESKTOP_BUILD_VERSION"
+            --config.publish.provider=github
+            --config.publish.owner="$UPDATE_OWNER"
+            --config.publish.repo="$UPDATE_REPO"
+          )
           if [ -f scripts/run-electron-builder.mjs ]; then
-            npm run builder -- --config.extraMetadata.version="$DESKTOP_BUILD_VERSION"
+            npm run builder -- "${target[@]}"
           else
-            npm run builder -- --publish never --config.extraMetadata.version="$DESKTOP_BUILD_VERSION"
+            npm run builder -- --publish never "${target[@]}"
           fi
+
+      # The publish config is only useful if electron-builder honoured it, and a
+      # silently-ignored --config flag looks exactly like a working one.
+      - name: Verify the update target
+        working-directory: hermes-agent/apps/desktop
+        shell: bash
+        env:
+          UPDATE_OWNER: ${{ github.repository_owner }}
+        run: |
+          UPDATE_REPO=${GITHUB_REPOSITORY#*/}
+          found=$(find release -name app-update.yml)
+          if [ -z "$found" ]; then
+            echo "::warning::electron-builder generated no app-update.yml"
+            exit 0
+          fi
+          for file in $found; do
+            cat "$file"
+            if ! grep -qx "owner: $UPDATE_OWNER" "$file" || ! grep -qx "repo: $UPDATE_REPO" "$file"; then
+              echo "::error::$file does not point at $UPDATE_OWNER/$UPDATE_REPO"
+              exit 1
+            fi
+          done
 
       - uses: actions/upload-artifact@v7
         with:

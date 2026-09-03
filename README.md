@@ -39,7 +39,7 @@
 請把以下資料提供給該安裝檔的維護者：
 
 - 作業系統與版本。
-- 安裝檔名稱，例如 `Hermes-0.17.0-remote.1-win-x64.exe`。
+- 安裝檔名稱，例如 `Hermes-0.21.0-remote.4-win-x64.exe`。
 - 畫面上的錯誤訊息或截圖。
 - 問題發生時間。
 
@@ -152,6 +152,16 @@ npx vitest run --project electron electron/local-workspace-bridge.test.ts
 
 這裡的 Desktop 補丁只控制使用者電腦上的 App，目前只負責避免自動安裝本機 runtime。Server URL 由使用者在 App 裡設定。
 
+**判斷條件是「這是不是打包過的安裝檔」，不是環境變數。** 早期版本靠 `HERMES_DESKTOP_REMOTE_ONLY=true` 判斷，但 CI 只在 build 當下設了那個變數，環境變數不會跟著進到安裝好的 App，所以使用者電腦上這個判斷永遠是 false、官方的本機安裝流程照跑。現在改成 `shouldSkipAutoBootstrap(process.env, IS_PACKAGED)`：
+
+| 情境 | 是否會自動安裝本機 runtime |
+| --- | --- |
+| 本 repo 的安裝檔 | 否（預設） |
+| 官方原始碼 `npm run dev` | 是（跟官方一樣） |
+| `HERMES_DESKTOP_SKIP_BOOTSTRAP=true` / `HERMES_DESKTOP_REMOTE_ONLY=true` | 否 |
+| `HERMES_DESKTOP_ALLOW_LOCAL_BOOTSTRAP=true`（安裝檔） | 是（逃生門） |
+
+
 如果漏洞位於 Hermes Server API，例如跨 profile 讀取 session、寫入別人的 `SOUL.md`，只更新 Desktop **不會**修好。遠端 Server 本身也必須升級或 backport 官方修正。Server 候選 PR、作者歸屬、驗證與離線 Container 工具集中在獨立的 [Yomisana/hermes-agent-patches](https://github.com/Yomisana/hermes-agent-patches) 維護。
 
 ## 給維護者：版本與檔案
@@ -162,6 +172,7 @@ npx vitest run --project electron electron/local-workspace-bridge.test.ts
 - `scripts/apply-local-workspace-bridge.py`：接上 Local Workspace Bridge（`main.ts` + `preload.ts`）；同樣是字串錨點、找不到唯一 anchor 就停。
 - `scripts/apply-release-update-source.py`：把 Desktop 的更新檢查指向本 repo 的 GitHub releases；必須在 remote-only patch 之後執行（它錨定在那個 patch 插入的 import）。
 - `apps/desktop/electron/release-update-source.ts`：更新檢查的全部邏輯。只回報、不下載也不替換任何檔案。
+- `apps/desktop/electron/remote-bootstrap-policy.ts`：判斷這個 build 是否允許自動安裝本機 runtime。
 - `apps/desktop/electron/local-workspace-bridge.ts`：Bridge 全部的行為都在這一個獨立檔案，官方檔案只被改約 25 行，rebase 衝突面極小。
 - `scripts/resolve-version.py`：決定要建置的官方 tag 與 `overlayVersion`，並產生安裝檔版本及 release tag。不加參數時只讀 `upstream.json`（離線），CI 才會帶 `--refresh-upstream --count-local-commits --probe-releases --write`。
 - `.github/workflows/sync-and-build.yml`：驗證、建置、打包及建立 draft release。
@@ -185,7 +196,7 @@ npx vitest run --project electron electron/local-workspace-bridge.test.ts
 - 因為每個 build 都是 pre-release，用的是 `/releases` 列表而不是 `/releases/latest`（後者會跳過 pre-release）。
 - **只回報，不自動更新**：有新版就顯示版本與下載連結，沒有就顯示 up to date，查不到就說查不到。實際安裝仍然是使用者自己下載安裝檔。
 
-順帶一提，`resources/app-update.yml` 目前仍寫著 `NousResearch/hermes-agent`，那是 electron-builder 從官方 `package.json` 的 `repository` 欄位自動產生的。官方 Desktop 沒有相依 `electron-updater`、也沒有呼叫 `autoUpdater`，所以那個檔案目前不會被任何程式讀取。
+`resources/app-update.yml` 也一併指到本 repo：electron-builder 會從官方 `package.json` 的 `repository` 欄位推出 `NousResearch/hermes-agent`，CI 用 `--config.publish.owner/repo` 蓋掉它，並在打包後檢查產生出來的 `app-update.yml` 確實寫著本 repo，寫錯就讓 build 失敗。（官方 Desktop 目前沒有相依 `electron-updater`，這個檔案還沒有程式會讀，但將來官方接上時就不會抓錯來源。）
 
 ## 升級官方 Hermes Agent
 

@@ -14,22 +14,38 @@
 export interface BootstrapPolicyEnv {
   HERMES_DESKTOP_SKIP_BOOTSTRAP?: string
   HERMES_DESKTOP_REMOTE_ONLY?: string
+  HERMES_DESKTOP_ALLOW_LOCAL_BOOTSTRAP?: string
 }
 
 /**
  * Returns true when local-runtime auto-install (install.ps1 / install.sh /
  * uv-managed venv creation) must be skipped entirely.
  *
- * Enabled by either:
- *   HERMES_DESKTOP_SKIP_BOOTSTRAP=true   (explicit opt-out)
- *   HERMES_DESKTOP_REMOTE_ONLY=true      (semantic alias used by our build)
+ * Packaged builds of THIS overlay are remote-only by definition — that is the
+ * whole point of the build — so `isPackaged` alone is enough. Relying on
+ * HERMES_DESKTOP_REMOTE_ONLY did not work: CI sets it while electron-builder
+ * runs, but env vars do not survive into the installed app, so the guard read
+ * false on every user's machine and upstream's installer ran anyway.
  *
- * Both must be explicit string 'true' — unset/empty/other values fall through
- * to upstream's normal behavior, so a stock build (no env vars set) behaves
- * identically to the official Hermes Desktop.
+ * Explicit env still wins in both directions:
+ *   HERMES_DESKTOP_SKIP_BOOTSTRAP=true       force skip (e.g. `npm run dev`)
+ *   HERMES_DESKTOP_REMOTE_ONLY=true          semantic alias, same effect
+ *   HERMES_DESKTOP_ALLOW_LOCAL_BOOTSTRAP=true escape hatch: let a packaged
+ *                                            build install a local runtime
+ *
+ * All must be the exact string 'true'. An unpackaged run with no env set falls
+ * through to upstream's normal behavior, so developing against this overlay is
+ * unchanged.
  */
-export function shouldSkipAutoBootstrap(env: BootstrapPolicyEnv = process.env as BootstrapPolicyEnv): boolean {
-  return env.HERMES_DESKTOP_SKIP_BOOTSTRAP === 'true' || env.HERMES_DESKTOP_REMOTE_ONLY === 'true'
+export function shouldSkipAutoBootstrap(
+  env: BootstrapPolicyEnv = process.env as BootstrapPolicyEnv,
+  isPackaged = false
+): boolean {
+  if (env.HERMES_DESKTOP_SKIP_BOOTSTRAP === 'true' || env.HERMES_DESKTOP_REMOTE_ONLY === 'true') {
+    return true
+  }
+
+  return isPackaged && env.HERMES_DESKTOP_ALLOW_LOCAL_BOOTSTRAP !== 'true'
 }
 
 /**

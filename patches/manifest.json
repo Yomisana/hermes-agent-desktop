@@ -7,7 +7,13 @@
       "scope": "desktop-client",
       "status": "local",
       "apply": "scripts/apply-patch.py",
-      "description": "Disable automatic local runtime bootstrap; users configure the remote gateway explicitly."
+      "description": "Never auto-install a local Hermes Agent runtime in a packaged build; users configure the remote gateway explicitly. Keyed on app.isPackaged, not on a build-time env var.",
+      "files": [
+        "apps/desktop/electron/remote-bootstrap-policy.ts"
+      ],
+      "tests": [
+        "apps/desktop/electron/remote-bootstrap-policy.test.ts"
+      ]
     },
     {
       "id": "local-workspace-bridge",

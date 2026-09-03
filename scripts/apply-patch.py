@@ -22,7 +22,7 @@ def apply(path: str) -> None:
             "    rememberLog('[bootstrap] no Hermes install found; starting first-launch bootstrap')\n"
             "\n"
             "    // Remote-only builds never auto-install a local runtime.\n"
-            "    if (shouldSkipAutoBootstrap()) {\n"
+            "    if (shouldSkipAutoBootstrap(process.env, IS_PACKAGED)) {\n"
             "      const err = bootstrapSkippedError(backend.activeRoot)\n"
             "      bootstrapFailure = err\n"
             "      throw err\n"
