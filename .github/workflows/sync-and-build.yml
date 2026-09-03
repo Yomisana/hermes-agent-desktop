@@ -132,7 +132,19 @@ jobs:
         env:
           HERMES_DESKTOP_REMOTE_ONLY: 'true'
           DESKTOP_BUILD_VERSION: ${{ needs.resolve.outputs.desktop_build_version }}
-        run: npm run builder -- --publish never --config.extraMetadata.version="$DESKTOP_BUILD_VERSION"
+        run: |
+          # Upstream's scripts/run-electron-builder.mjs already prepends
+          # `--publish never` (CI=1 otherwise makes electron-builder resolve a
+          # publish target). Passing it again would hand yargs the flag twice,
+          # which yields the array ["never","never"] instead of the string
+          # "never" — electron-builder then falls back to publishing and dies
+          # on "GitHub Personal Access Token is not set". So only add the flag
+          # when the wrapper that pins it is absent.
+          if [ -f scripts/run-electron-builder.mjs ]; then
+            npm run builder -- --config.extraMetadata.version="$DESKTOP_BUILD_VERSION"
+          else
+            npm run builder -- --publish never --config.extraMetadata.version="$DESKTOP_BUILD_VERSION"
+          fi
 
       - uses: actions/upload-artifact@v7
         with:
