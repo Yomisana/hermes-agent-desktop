@@ -9,8 +9,12 @@ import {
   ALWAYS_IGNORED,
   type Baseline,
   baselineFrom,
+  clearRemoteHomeCache,
   createIgnoreMatcher,
+  expandRemotePath,
+  needsRemoteHome,
   normalizeBridgeConfig,
+  resolveRemoteHome,
   reconcile,
   relativeKey,
   remoteJoin,
@@ -531,4 +535,112 @@ test('baselineFrom only records paths both sides actually agree on', () => {
   )
 
   assert.deepEqual(Object.keys(baseline), ['both.md'])
+})
+
+// ---------------------------------------------------------------------------
+// Home-relative remote paths: the gateway account name is not knowable from
+// this machine, so a config must be shareable without hard-coding /home/<user>.
+// ---------------------------------------------------------------------------
+
+test('~ and $HOME expand against the gateway home; absolute paths do not', () => {
+  for (const template of ['~/bridge/app', '$HOME/bridge/app', '${HOME}/bridge/app']) {
+    assert.equal(needsRemoteHome(template), true)
+    assert.equal(expandRemotePath(template, '/home/dionysusj'), '/home/dionysusj/bridge/app')
+  }
+
+  assert.equal(needsRemoteHome('/srv/bridge/app'), false)
+  assert.equal(expandRemotePath('/srv/bridge/app', '/home/dionysusj'), '/srv/bridge/app')
+  // A bare ~ is the home itself, and a trailing slash on either side collapses.
+  assert.equal(expandRemotePath('~', '/home/dionysusj/'), '/home/dionysusj')
+  assert.equal(expandRemotePath('~/bridge/', '/home/dionysusj'), '/home/dionysusj/bridge')
+  // ~user is someone else's home and is NOT a supported form.
+  assert.equal(needsRemoteHome('~root/bridge'), false)
+})
+
+test('a home-relative remotePath passes config validation', () => {
+  const { config, errors } = normalizeBridgeConfig({
+    enabled: true,
+    mounts: [{ id: 'app', localPath: 'C:\\src\\app', remotePath: '~/bridge/app' }]
+  })
+
+  assert.deepEqual(errors, [])
+  assert.equal(config.mounts[0].remotePath, '~/bridge/app')
+
+  const relative = normalizeBridgeConfig({
+    enabled: true,
+    mounts: [{ id: 'app', localPath: 'C:\\src\\app', remotePath: 'bridge/app' }]
+  })
+
+  assert.equal(relative.config.mounts.length, 0)
+  assert.match(relative.errors[0], /absolute POSIX path/)
+})
+
+test('the gateway home comes from the server, with a fallback and a cache', async () => {
+  clearRemoteHomeCache()
+
+  const calls: string[] = []
+  const home = await resolveRemoteHome(async ({ path }) => {
+    calls.push(path)
+
+    return { path: '/home/dionysusj' }
+  })
+
+  assert.equal(home, '/home/dionysusj')
+  assert.match(calls[0], /^\/api\/files\?path=/)
+
+  // Second lookup is served from cache: no second request.
+  const cached = await resolveRemoteHome(async () => {
+    throw new Error('should not be called')
+  })
+
+  assert.equal(cached, '/home/dionysusj')
+
+  clearRemoteHomeCache()
+
+  const fallback = await resolveRemoteHome(async ({ path }) => {
+    if (path.startsWith('/api/files')) {
+      throw new Error('managed files root is locked')
+    }
+
+    return { branch: 'main', cwd: '/srv/agent' }
+  })
+
+  assert.equal(fallback, '/srv/agent')
+
+  clearRemoteHomeCache()
+  await assert.rejects(
+    resolveRemoteHome(async () => ({})),
+    /could not resolve the gateway home/
+  )
+  clearRemoteHomeCache()
+})
+
+test('a mount whose home cannot be resolved fails without touching the remote', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-home-'))
+  const local = path.join(dir, 'app')
+
+  fs.mkdirSync(local)
+  fs.writeFileSync(path.join(local, 'a.txt'), 'a')
+
+  const seen: string[] = []
+  const status = await syncMount(
+    { id: 'app', ignore: [], localPath: local, maxFileBytes: 1024, mode: 'two-way', remotePath: '~/bridge/app' },
+    {
+      api: async ({ path: requestPath }) => {
+        seen.push(requestPath)
+
+        return {}
+      },
+      config: normalizeBridgeConfig({ enabled: true, mounts: [] }).config,
+      platform: 'linux',
+      resolveHome: async () => {
+        throw new Error('gateway unreachable')
+      },
+      stateDir: dir
+    }
+  )
+
+  assert.match(status.error ?? '', /gateway unreachable/)
+  assert.deepEqual(seen, [])
+  fs.rmSync(dir, { recursive: true, force: true })
 })

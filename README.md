@@ -115,7 +115,7 @@ Agent 之後就在那個遠端路徑上工作，跟一般專案沒兩樣——�
     {
       "id": "shared-memory",
       "localPath": "\\\\wsl.localhost\\Ubuntu\\home\\me\\code-project\\shared-memory",
-      "remotePath": "/home/username/bridge/shared-memory",
+      "remotePath": "~/bridge/shared-memory",
       "mode": "two-way"
     }
   ]
@@ -123,7 +123,7 @@ Agent 之後就在那個遠端路徑上工作，跟一般專案沒兩樣——�
 ```
 
 - `localPath`：本機路徑。Windows（`C:\src\app`）、UNC（`\\wsl.localhost\Ubuntu\home\me\app`）或 POSIX（`/home/me/app`、`/mnt/c/src/app`）都可以；POSIX 路徑在 Windows 上會自動轉成 UNC / 磁碟機形式，所以 **WSL 專案資料夾可以直接授權**。
-- `remotePath`：gateway 主機上的絕對路徑。把 Agent 的 workspace cwd 指到這裡。
+- `remotePath`：gateway 主機上的路徑。**不要寫死 `/home/<某個帳號>`** —— 用 `~/...`、`$HOME/...` 或 `${HOME}/...`，同步時會向 gateway 問出「目前這個帳號自己的家目錄」再展開（先打 `GET /api/files?path=~`，失敗才退回 `GET /api/fs/default-cwd`），所以同一份設定檔換人用也不必改。寫絕對路徑也還是可以，而且完全不會多打任何 API。展開結果會顯示在 `status()` 的 `remotePath` 欄位。
 - `mode`：`two-way`（預設）、`push`（只上傳）、`pull`（只下載）。
 - `profile`（選填）：指定要同步到哪個 Desktop 連線 profile。
 

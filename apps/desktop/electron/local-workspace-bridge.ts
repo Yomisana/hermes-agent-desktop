@@ -247,6 +247,86 @@ export function relativeKey(root: string, absolutePath: string, pathImpl: any = 
   return rel.split(/[\\/]/).join('/')
 }
 
+// ---------------------------------------------------------------------------
+// Home-relative remote paths
+//
+// A gateway account name is not knowable from this machine, and the same
+// config is meant to work for everyone on a shared gateway — so remotePath may
+// start with `~`, `$HOME` or `${HOME}` and is resolved against the gateway
+// user's own home at sync time. Absolute paths are left exactly as written.
+// ---------------------------------------------------------------------------
+
+const HOME_PREFIX_RE = /^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/
+
+export function needsRemoteHome(remotePath: string): boolean {
+  return HOME_PREFIX_RE.test(String(remotePath || ''))
+}
+
+export function expandRemotePath(remotePath: string, home: string): string {
+  if (!needsRemoteHome(remotePath)) {
+    return remotePath
+  }
+
+  const base = String(home || '').replace(/\/+$/, '')
+  const rest = String(remotePath).replace(HOME_PREFIX_RE, '')
+  const joined = `${base}${rest}`.replace(/\/{2,}/g, '/').replace(/\/+$/, '')
+
+  return joined || '/'
+}
+
+// One home per profile per process. The gateway user cannot change under a
+// running Desktop, and a lookup on every mount on every pass would be a
+// request per 10s per mount for an answer that never moves.
+const remoteHomeCache = new Map<string, string>()
+
+export function clearRemoteHomeCache(): void {
+  remoteHomeCache.clear()
+}
+
+/**
+ * The gateway user's home directory.
+ *
+ * `GET /api/files?path=~` is the exact answer: the server expands `~` with
+ * Path.expanduser() and echoes the resolved absolute path back. If that fails
+ * (older server, locked-down managed-files root), fall back to the default cwd
+ * the desktop already uses for the agent's working directory.
+ */
+export async function resolveRemoteHome(api: GatewayApi, profile?: string): Promise<string> {
+  const key = profile || ''
+  const cached = remoteHomeCache.get(key)
+
+  if (cached) {
+    return cached
+  }
+
+  const candidates: (() => Promise<unknown>)[] = [
+    () => api({ path: `/api/files?path=${encodeURIComponent('~')}`, profile }),
+    () => api({ path: '/api/fs/default-cwd', profile })
+  ]
+
+  let lastError: unknown = null
+
+  for (const call of candidates) {
+    try {
+      const response: any = await call()
+      const home = String(response?.path || response?.cwd || '').trim()
+
+      if (home.startsWith('/')) {
+        const normalized = home.replace(/\/+$/, '') || '/'
+        remoteHomeCache.set(key, normalized)
+
+        return normalized
+      }
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  throw new Error(
+    `could not resolve the gateway home directory${lastError ? `: ${(lastError as any)?.message || lastError}` : ''}`
+  )
+}
+
 /** Remote root + relative key → absolute POSIX path on the gateway host. */
 export function remoteJoin(remoteRoot: string, rel: string): string {
   const root = String(remoteRoot || '').replace(/\/+$/, '')
@@ -343,8 +423,11 @@ export function normalizeBridgeConfig(raw: unknown): { config: BridgeConfig; err
       continue
     }
 
-    if (!remotePath.startsWith('/')) {
-      errors.push(`${label}: remotePath must be an absolute POSIX path on the gateway host`)
+    if (!remotePath.startsWith('/') && !needsRemoteHome(remotePath)) {
+      errors.push(
+        `${label}: remotePath must be an absolute POSIX path on the gateway host, ` +
+          "or start with ~ / $HOME to mean the gateway user's own home"
+      )
       continue
     }
 
@@ -400,7 +483,8 @@ export function bridgeConfigTemplate(): string {
         'Authorize local folders for the remote Hermes Agent.',
         'Set enabled=true and restart Hermes Desktop.',
         'localPath: Windows, UNC, or WSL path on THIS machine.',
-        'remotePath: absolute path on the Hermes gateway host (point the agent cwd here).',
+        'remotePath: path on the Hermes gateway host (point the agent cwd here).',
+        "remotePath may start with ~ or $HOME — resolved to the gateway user's own home.",
         'mode: two-way | push | pull',
         '.env / credential files are never synced.'
       ],
@@ -413,7 +497,7 @@ export function bridgeConfigTemplate(): string {
         {
           id: 'shared-memory',
           localPath: '\\\\wsl.localhost\\Ubuntu\\home\\me\\code-project\\shared-memory',
-          remotePath: '/home/username/bridge/shared-memory',
+          remotePath: '~/bridge/shared-memory',
           mode: 'two-way'
         }
       ]
@@ -842,6 +926,7 @@ export async function syncMount(
     now?: () => number
     platform?: string
     profile?: string
+    resolveHome?: (api: GatewayApi, profile?: string) => Promise<string>
     stateDir: string
     wslDistro?: string
   }
@@ -860,6 +945,22 @@ export async function syncMount(
     remotePath: mount.remotePath,
     removed: 0,
     skipped: []
+  }
+
+  // `~/project` → `/home/<gateway user>/project`. Absolute paths never ask the
+  // gateway anything, so existing configs behave exactly as before.
+  let remoteRoot = mount.remotePath
+
+  if (needsRemoteHome(remoteRoot)) {
+    try {
+      const resolveHome = options.resolveHome || resolveRemoteHome
+      remoteRoot = expandRemotePath(remoteRoot, await resolveHome(api, options.profile))
+      status.remotePath = remoteRoot
+    } catch (error: any) {
+      status.error = `${mount.remotePath}: ${error?.message || error}`
+
+      return status
+    }
   }
 
   const ignore = createIgnoreMatcher([...(options.config.ignore || []), ...(mount.ignore || [])])
@@ -888,10 +989,10 @@ export async function syncMount(
   const file = baselinePath(options.stateDir, mount.id)
 
   try {
-    await remoteMkdir(api, mount.remotePath, options.profile)
+    await remoteMkdir(api, remoteRoot, options.profile)
 
     let local = await scanLocalTree(localRoot, scanOptions)
-    let remote = await scanRemoteTree(api, mount.remotePath, {
+    let remote = await scanRemoteTree(api, remoteRoot, {
       ignore,
       maxFiles: options.config.maxFiles,
       profile: options.profile
@@ -912,7 +1013,7 @@ export async function syncMount(
 
     for (const action of actions) {
       const absLocal = path.join(localRoot, ...action.rel.split('/'))
-      const absRemote = remoteJoin(mount.remotePath, action.rel)
+      const absRemote = remoteJoin(remoteRoot, action.rel)
 
       switch (action.type) {
         case 'mkdirLocal':
@@ -972,7 +1073,7 @@ export async function syncMount(
     // against what is actually on disk rather than against pre-transfer stats.
     if (actions.length) {
       local = await scanLocalTree(localRoot, scanOptions)
-      remote = await scanRemoteTree(api, mount.remotePath, {
+      remote = await scanRemoteTree(api, remoteRoot, {
         ignore,
         maxFiles: options.config.maxFiles,
         profile: options.profile
@@ -1092,6 +1193,7 @@ export function createBridgeRunner(deps: {
     getStatus: () => ({ config, errors, mounts: statuses, running: Boolean(timer) }),
     reload: () => {
       stop()
+      clearRemoteHomeCache()
       ;({ config, errors } = readBridgeConfig(deps.configPath, fsImpl))
       statuses = []
       start()
