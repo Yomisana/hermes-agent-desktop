@@ -23,6 +23,23 @@
       ],
       "description": "Mirror an authorized local folder to the gateway host so a remote agent can read and write it. Uses only stock managed-files endpoints; no server patch required. Off unless local-workspace-bridge.json enables it.",
       "upstreamIssue": "https://github.com/NousResearch/hermes-agent/issues/18715"
+    },
+    {
+      "id": "desktop-release-updates",
+      "version": 1,
+      "scope": "desktop-client",
+      "status": "local",
+      "apply": "scripts/apply-release-update-source.py",
+      "files": [
+        "apps/desktop/electron/release-update-source.ts"
+      ],
+      "tests": [
+        "apps/desktop/electron/release-update-source.test.ts"
+      ],
+      "description": "Point the desktop update check at this repo's GitHub releases. Upstream's checkUpdates() only works against a git checkout, so packaged builds show \"isn't a git checkout\" instead of an update status. Report-only: it never downloads or swaps a build.",
+      "requires": [
+        "desktop-remote-only"
+      ]
     }
   ]
 }

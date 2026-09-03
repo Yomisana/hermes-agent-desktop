@@ -160,11 +160,32 @@ npx vitest run --project electron electron/local-workspace-bridge.test.ts
 - `patches/manifest.json`：只記錄會套入 Desktop client 的補丁。
 - `scripts/apply-patch.py`：修改官方 `main.ts`；找不到唯一 anchor 時立即停止。
 - `scripts/apply-local-workspace-bridge.py`：接上 Local Workspace Bridge（`main.ts` + `preload.ts`）；同樣是字串錨點、找不到唯一 anchor 就停。
+- `scripts/apply-release-update-source.py`：把 Desktop 的更新檢查指向本 repo 的 GitHub releases；必須在 remote-only patch 之後執行（它錨定在那個 patch 插入的 import）。
+- `apps/desktop/electron/release-update-source.ts`：更新檢查的全部邏輯。只回報、不下載也不替換任何檔案。
 - `apps/desktop/electron/local-workspace-bridge.ts`：Bridge 全部的行為都在這一個獨立檔案，官方檔案只被改約 25 行，rebase 衝突面極小。
 - `scripts/resolve-version.py`：決定要建置的官方 tag 與 `overlayVersion`，並產生安裝檔版本及 release tag。不加參數時只讀 `upstream.json`（離線），CI 才會帶 `--refresh-upstream --count-local-commits --probe-releases --write`。
 - `.github/workflows/sync-and-build.yml`：驗證、建置、打包及建立 draft release。
 
 這個公開建置流程不接受 `HERMES_GATEWAY_URL`，也不會把 Gateway URL 寫進安裝檔。使用者第一次開啟時需要自行設定連線，避免公開 repo 或公開 artifacts 意外帶入內部環境資訊。
+
+## 更新檢查（Updates）
+
+官方的 Desktop 自我更新是 git 流程：`checkUpdates()` 會去 git-pull 後端的 hermes root，所以只要那個目錄不是 git checkout 就直接回報
+
+```
+<path> isn't a git checkout — desktop self-update only runs against a source install.
+```
+
+用安裝檔裝的 remote-only build 永遠是這個狀態（機器上根本沒有官方原始碼），所以更新頁面看到的是錯誤而不是狀態。
+
+本 repo 的 overlay 改成去查**本 repo 自己的 GitHub releases**：
+
+- 目標預設 `Yomisana/hermes-agent-desktop`，可用環境變數 `HERMES_DESKTOP_UPDATE_REPO=<owner>/<repo>` 覆蓋。
+- 比對用的是安裝檔版本（`0.21.0-remote.3`），不是 release tag（`v2026.8.31-remote.3`）——版本號從 asset 檔名 `Hermes-<version>-*` 讀出來，兩種編號永遠不會互比。
+- 因為每個 build 都是 pre-release，用的是 `/releases` 列表而不是 `/releases/latest`（後者會跳過 pre-release）。
+- **只回報，不自動更新**：有新版就顯示版本與下載連結，沒有就顯示 up to date，查不到就說查不到。實際安裝仍然是使用者自己下載安裝檔。
+
+順帶一提，`resources/app-update.yml` 目前仍寫著 `NousResearch/hermes-agent`，那是 electron-builder 從官方 `package.json` 的 `repository` 欄位自動產生的。官方 Desktop 沒有相依 `electron-updater`、也沒有呼叫 `autoUpdater`，所以那個檔案目前不會被任何程式讀取。
 
 ## 升級官方 Hermes Agent
 

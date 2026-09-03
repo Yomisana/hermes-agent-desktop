@@ -113,6 +113,16 @@ jobs:
             hermes-agent/apps/desktop/electron/main.ts \
             hermes-agent/apps/desktop/electron/preload.ts
 
+      # Must run after the remote-only patch: it anchors on the import that
+      # patch inserts, so a reordering fails loudly instead of silently.
+      - name: Apply release-update-source patch
+        shell: bash
+        run: |
+          cp apps/desktop/electron/release-update-source.ts hermes-agent/apps/desktop/electron/
+          cp apps/desktop/electron/release-update-source.test.ts hermes-agent/apps/desktop/electron/
+          python3 scripts/apply-release-update-source.py \
+            hermes-agent/apps/desktop/electron/main.ts
+
       - name: Install deps and build
         working-directory: hermes-agent/apps/desktop
         run: |
@@ -122,9 +132,12 @@ jobs:
       # Guards the overlay itself: reconciliation, the ignore rules that keep
       # credential files off the wire, and full sync passes against a fake
       # gateway. Runs before packaging so a broken bridge never ships.
-      - name: Test local-workspace-bridge overlay
+      - name: Test overlays
         working-directory: hermes-agent/apps/desktop
-        run: npx vitest run --project electron electron/local-workspace-bridge.test.ts
+        run: |
+          npx vitest run --project electron \
+            electron/local-workspace-bridge.test.ts \
+            electron/release-update-source.test.ts
 
       - name: Package with electron-builder
         working-directory: hermes-agent/apps/desktop
